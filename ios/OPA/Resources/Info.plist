@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<key>CFBundleDisplayName</key>
+	<string>Orbit</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.haoyuanyu.orbit.url</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>opa</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_opa._tcp</string>
+	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Orbit 会读取你未来 24 小时的日程，以便安排提醒和规划任务。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用于扫描 Mac 上显示的配对二维码。</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>批准付款、下单等敏感操作前需要验证你的身份。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于在同一局域网内直接、安全地连接你 Mac 上的 Orbit。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Orbit 会使用你的大致位置来提供与所在地相关的帮助（如天气、附近地点）。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>用于选择照片发送给 Orbit、设置 Orbit 头像或识别配对二维码。</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>用于读取未完成的提醒事项，并支持将提醒交给 Orbit 处理。</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

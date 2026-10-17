@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><style>
+body{margin:0;background:#ECE6DE;font:14px -apple-system;padding:30px 40px}
+.row{display:flex;gap:34px;align-items:flex-end;margin-bottom:26px}
+.t{border-radius:22.4%;overflow:hidden;box-shadow:0 10px 24px -10px rgba(0,0,0,.4)} .t img{width:100%;display:block}
+.c{display:flex;flex-direction:column;align-items:center;gap:8px;color:#6D6259} b{width:150px;font-size:18px;color:#302B27}
+</style>
+<script>
+for (const [v, label] of [['a','A · 正面，底部出血'],['b','B · 挥手，完整悬浮']]) document.write(`<div class="row"><b>${label}</b>
+<div class="c"><div class="t" style="width:190px"><img src="/tmp/opa-icons-${v}/AppIcon.png"></div>浅色</div>
+<div class="c"><div class="t" style="width:190px"><img src="/tmp/opa-icons-${v}/AppIcon-Dark.png"></div>深色</div>
+<div class="c"><div class="t" style="width:190px"><img src="/tmp/opa-icons-${v}/AppIcon-Tinted.png"></div>着色</div>
+<div class="c"><div style="display:flex;gap:14px;align-items:flex-end"><div class="t" style="width:60px"><img src="/tmp/opa-icons-${v}/AppIcon.png"></div><div class="t" style="width:40px"><img src="/tmp/opa-icons-${v}/AppIcon.png"></div><div class="t" style="width:60px"><img src="/tmp/opa-icons-${v}/AppIcon-Dark.png"></div></div>主屏尺寸</div></div>`);
+</script>

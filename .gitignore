@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.wrangler/
+.DS_Store
+ios/*.xcodeproj
+ios/build/
+ios/DerivedData/
+*.log
+.dev.vars
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+
+# Xcode build output and design screenshots
+ios/build-*/
+ios/screenshots/
+
+# Secrets (APNs key etc.)
+*.p8
+
+# Not part of the public release: Muse/ADB-relay work in progress, archived experiments, personal dev log
+archive/
+android/
+kits/
+docs/handoff-adb-relay.md
+docs/design/adb-relay.md
+docs/design/adb-relay-protocol.md
+AGENT.md

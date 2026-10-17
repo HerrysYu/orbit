@@ -1,0 +1,127 @@
+name: OPA
+options:
+  bundleIdPrefix: com.haoyuanyu
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    # Change this single value to use your own bundle id. Extension ids derive from it.
+    APP_BUNDLE_ID: com.haoyuanyu.orbit
+    # Set your Apple Developer Team ID here (or in Xcode) to run on a device.
+    DEVELOPMENT_TEAM: 6K6QZX2QN7
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+    GENERATE_INFOPLIST_FILE: NO
+
+targets:
+  OPA:
+    type: application
+    platform: iOS
+    sources:
+      - path: OPA
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        PRODUCT_NAME: OPA
+        INFOPLIST_FILE: OPA/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: OPA/Resources/OPA.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: OPA/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Orbit
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDevelopmentRegion: zh-Hans
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+        NSSupportsLiveActivities: true
+        NSLocalNetworkUsageDescription: 用于在同一局域网内直接、安全地连接你 Mac 上的 Orbit。
+        NSBonjourServices: [_opa._tcp]
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: false
+          NSAllowsLocalNetworking: true
+        NSLocationWhenInUseUsageDescription: Orbit 会使用你的大致位置来提供与所在地相关的帮助（如天气、附近地点）。
+        NSCalendarsFullAccessUsageDescription: Orbit 会读取你未来 24 小时的日程，以便安排提醒和规划任务。
+        NSRemindersFullAccessUsageDescription: 用于读取未完成的提醒事项，并支持将提醒交给 Orbit 处理。
+        NSFaceIDUsageDescription: 批准付款、下单等敏感操作前需要验证你的身份。
+        NSCameraUsageDescription: 用于扫描 Mac 上显示的配对二维码。
+        NSPhotoLibraryUsageDescription: 用于选择照片发送给 Orbit、设置 Orbit 头像或识别配对二维码。
+        CFBundleURLTypes:
+          - CFBundleURLName: com.haoyuanyu.orbit.url
+            CFBundleURLSchemes: [opa]
+    entitlements:
+      path: OPA/Resources/OPA.entitlements
+      properties:
+        aps-environment: development
+        com.apple.security.application-groups: [group.com.haoyuanyu.orbit]
+    dependencies:
+      - target: OPAWidgets
+
+  OPAWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OPAWidgets
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).widgets
+        PRODUCT_NAME: OPAWidgets
+        INFOPLIST_FILE: OPAWidgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: OPAWidgets/OPAWidgets.entitlements
+        SKIP_INSTALL: YES
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: OPAWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Orbit
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: OPAWidgets/OPAWidgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.haoyuanyu.orbit]
+
+  OPATests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: OPATests
+        excludes: ["*.md"]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/OPA.app/OPA
+        BUNDLE_LOADER: $(TEST_HOST)
+    dependencies:
+      - target: OPA
+
+schemes:
+  OPA:
+    build:
+      targets:
+        OPA: all
+        OPATests: [test]
+    test:
+      targets:
+        - OPATests
+    run:
+      config: Debug

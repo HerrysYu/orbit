@@ -1,0 +1,150 @@
+<!doctype html>
+<!--
+  Orbit 竖版宣传图（6 张，1290×2796）。单文件，样式内联；配图是 raw/ 里的真实界面截图（浅色模式，演示模式）。
+
+  切换：promo.html?card=1 … promo.html?card=6 显示单张；不带参数或 ?view=overview 并排显示 6 张（两行，每行 3 张）。
+  导出（无头 Chrome，写法同 ../mockups/tools/shot.sh）：
+    cd docs/design/promo
+    CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    for n in 1 2 3 4 5 6; do
+      "$CHROME" --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files --force-device-scale-factor=1 \
+        --window-size=1290,2796 --virtual-time-budget=3000 --screenshot="orbit-promo-$n.png" "file://$PWD/promo.html?card=$n"
+    done
+    "$CHROME" --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files --force-device-scale-factor=1 \
+      --window-size=2400,3335 --virtual-time-budget=3000 --screenshot="orbit-promo-overview.png" "file://$PWD/promo.html?view=overview"
+
+  raw/ 里的 5、6 号截图带 -AppleLanguages "(zh-Hans)"，地图上的路名才是中文；演示内容在 ios/OPA/Core/Demo/MockHost.swift 的 placeAndLinkScript。
+-->
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>Orbit 宣传图</title>
+<meta name="viewport" content="width=1290">
+<style>
+  :root {
+    --bg: #F7F6F4;
+    --ink: #1D1B19;
+    --ink-2: #5F5B55;
+    --line: #E6E3DE;
+    --pad: 96px;           /* 左右边距 */
+    --shot-w: 1000px;      /* 截图宽度 */
+    --shot-r: 90px;        /* 截图圆角 */
+    --shot-top: 504px;     /* 4 张的截图位置完全一致 */
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ——— 一张图 ——— */
+  .card { position: relative; width: 1290px; height: 2796px; background: var(--bg); overflow: hidden; }
+  .card[hidden] { display: none !important; }
+
+  /* 标题块：4 张的标题位置一致（第 1 张的图标行占的就是其余几张顶部的留白） */
+  .head { position: absolute; left: var(--pad); right: var(--pad); top: var(--pad); }
+  .brand { display: flex; align-items: center; gap: 28px; height: 160px; margin-bottom: 48px; }
+  .brand img {
+    display: block; width: 160px; height: 160px; border-radius: 36px;
+    border: 1px solid var(--line);
+    box-shadow: 0 1px 2px rgba(60, 45, 30, .06), 0 12px 32px -8px rgba(60, 45, 30, .16);
+  }
+  .brand b { font-size: 64px; line-height: 1; font-weight: 600; letter-spacing: -.01em; }
+  .gap { height: 208px; }   /* 没有图标行时的等高留白（160 + 48） */
+  h1 { font-size: 76px; line-height: 88px; font-weight: 600; letter-spacing: -.01em; }
+  .sub { margin-top: 16px; font-size: 40px; line-height: 56px; font-weight: 400; color: var(--ink-2); }
+
+  /* 截图：真实界面，不画手机外框 */
+  .shot {
+    position: absolute; left: calc((1290px - var(--shot-w)) / 2); top: var(--shot-top); width: var(--shot-w);
+    border-radius: var(--shot-r); overflow: hidden; background: #fff;
+    border: 1px solid var(--line);
+    box-shadow: 0 2px 6px rgba(60, 45, 30, .04), 0 28px 72px -12px rgba(60, 45, 30, .12);
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+
+  /* ——— 总览：6 张缩小，两行，每行 3 张（宽 2400：(2400 - 48 × 4) / 3 = 736，缩放 736 / 1290） ——— */
+  html[data-view="overview"], html[data-view="overview"] body { background: #ECEAE6; }
+  .grid { display: flex; flex-wrap: wrap; gap: 48px; padding: 48px; width: 2400px; }
+  html[data-view="overview"] .slot {
+    zoom: .5705; flex: none; border-radius: 56px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(60, 45, 30, .06), 0 20px 60px -20px rgba(60, 45, 30, .22);
+  }
+  html[data-view="single"] .grid { display: block; padding: 0; width: auto; }
+</style>
+</head>
+<body>
+<div class="grid">
+
+  <div class="slot"><section class="card" id="c1">
+    <div class="head">
+      <div class="brand"><img src="../../../ios/OPA/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt=""><b>Orbit</b></div>
+      <h1>说一句，交给 Orbit</h1>
+      <p class="sub">它在你的 Mac 上动手，你在手机上看结果</p>
+    </div>
+    <div class="shot"><img src="raw/01-empty.png" alt="空对话：Orbit 的问候和最近的任务"></div>
+  </section></div>
+
+  <div class="slot"><section class="card" id="c2">
+    <div class="head">
+      <div class="gap"></div>
+      <h1>结果直接摆在眼前</h1>
+      <p class="sub">比价、订位、行程，整理成卡片给你选</p>
+    </div>
+    <div class="shot"><img src="raw/02-flow.png" alt="对话里的酒店对比、预订和车票卡片"></div>
+  </section></div>
+
+  <div class="slot"><section class="card" id="c3">
+    <div class="head">
+      <div class="gap"></div>
+      <h1>进度一眼看清</h1>
+      <p class="sub">每件事走到哪一步，随时知道</p>
+    </div>
+    <div class="shot"><img src="raw/03-tasks.png" alt="任务页：等你处理、进行中、已结束"></div>
+  </section></div>
+
+  <div class="slot"><section class="card" id="c4">
+    <div class="head">
+      <div class="gap"></div>
+      <h1>花钱和对外发送，先问你</h1>
+      <p class="sub">你确认之后才执行，Face ID 把关</p>
+    </div>
+    <div class="shot"><img src="raw/04-approval.png" alt="审批弹窗：批准或拒绝，批准要 Face ID"></div>
+  </section></div>
+
+  <div class="slot"><section class="card" id="c5">
+    <div class="head">
+      <div class="gap"></div>
+      <h1>地点直接给你</h1>
+      <p class="sub">店名、地址、评分、电话，一张卡看完</p>
+    </div>
+    <div class="shot"><img src="raw/05-place.png" alt="对话里的两张地点卡：地图、店名、地址、评分、电话"></div>
+  </section></div>
+
+  <div class="slot"><section class="card" id="c6">
+    <div class="head">
+      <div class="gap"></div>
+      <h1>链接帮你理好</h1>
+      <p class="sub">发来的链接整理成摘要，随时回看</p>
+    </div>
+    <div class="shot"><img src="raw/06-links.png" alt="对话里的四张链接卡，每张一句话摘要"></div>
+  </section></div>
+
+</div>
+<script>
+  (function () {
+    var n = parseInt(new URLSearchParams(location.search).get('card'), 10);
+    var root = document.documentElement;
+    if (n >= 1 && n <= 6) {
+      root.setAttribute('data-view', 'single');
+      document.querySelectorAll('.slot').forEach(function (el, i) { el.hidden = (i + 1 !== n); });
+    } else {
+      root.setAttribute('data-view', 'overview');
+    }
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+import { CodexBridge } from '../src/codex/bridge.ts';
+const b = new CodexBridge();
+b.approvalHandler = async (a) => { console.log('APPROVAL', a.kind, a.risk, a.detail.slice(0,80)); return { approve: true }; };
+b.on('activity', (e) => console.log('ACT', e.text));
+b.on('status', (e) => console.log('STATUS', e.status));
+const done = new Promise((r) => b.on('turn_completed', (e) => { console.log('DONE', e.status, JSON.stringify(e.text)?.slice(0,300)); r(null); }));
+const ms = await b.models(); console.log('models', ms.map(m=>m.id).join(','));
+const mcp = await b.mcpServers(); console.log('mcp', mcp.map(m=>`${m.name}:${m.tools.length}`).join(','));
+const s = await b.createSession({ title: 'e2e smoke', prompt: '只回答一个词：pong。不要调用任何工具。', model: 'gpt-6-luna', effort: 'low' });
+console.log('session', s.threadId, s.model);
+await done;
+const items = await b.recentItems(s.threadId, 10); console.log('items', items.map(i=>i.kind+':'+i.text.slice(0,40)));
+await b.archive(s.threadId);
+b.rpc.stop(); process.exit(0);

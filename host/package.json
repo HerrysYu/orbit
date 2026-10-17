@@ -1,0 +1,32 @@
+{
+  "name": "opa-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "opa": "./bin/opa.mjs"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "gen:protocol": "rm -rf src/codex/protocol && codex app-server generate-ts --experimental --out src/codex/protocol"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "bonjour-service": "1.4.4",
+    "qrcode-terminal": "0.12.0",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "@types/qrcode-terminal": "0.12.2",
+    "@types/ws": "8.18.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  }
+}

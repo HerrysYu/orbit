@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><style>
+body{margin:0;display:grid;grid-template-columns:repeat(8,1fr);font:12px -apple-system}
+.c{height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.l{background:#FAF7F2;color:#302B27}.d{background:#191715;color:#F6EFE6}
+img{max-width:150px;max-height:170px}
+</style>
+<script>
+const names=['hero-wave','side','rear','attentive','thinking','focused','happy','avatar-tile'];
+for (const t of ['l','d']) for (const n of names) document.write(`<div class="c ${t}"><img src="../assets/placeholder-${n}.png"><span>${n}</span></div>`);
+</script>

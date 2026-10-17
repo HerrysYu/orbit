@@ -1,0 +1,29 @@
+name = "opa-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "HOST_RELAY"
+class_name = "HostRelay"
+
+[[durable_objects.bindings]]
+name = "TUNNEL_RELAY"
+class_name = "TunnelRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["HostRelay"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["TunnelRelay"]
+
+# Optional: restrict which hosts may register (comma-separated hostIds).
+[vars]
+ALLOWED_HOST_IDS = "2ee425a0be360cf511bfdbdb6a948e88"
+ALLOWED_PHONE_IDS = "48d5d4e0e5a1eb3e1680d056af1b32fc"
+
+# Secrets (set with `npx wrangler secret put <NAME>`):
+#   APNS_KEY_P8   contents of AuthKey_XXXXXXXXXX.p8
+#   APNS_KEY_ID   10-char key id
+#   APNS_TEAM_ID  10-char Apple team id
