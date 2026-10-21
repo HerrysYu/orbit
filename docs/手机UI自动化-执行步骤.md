@@ -1,5 +1,7 @@
 # 手机 UI 自动化接入：执行步骤（交接给实施 agent）
 
+[English](phone-ui-automation.md) | **简体中文**
+
 日期：2026-10-15，修订版 v2。仓库在 `/Users/herrysyu/Documents/OpenPersonalAgent`；参考项目是 `/Users/herrysyu/Documents/ChatGPT/OpenMuse`，只读，不要修改。
 
 ## 0. 背景与目标

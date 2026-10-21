@@ -3,6 +3,8 @@ name: memory-policy
 description: 涉及记忆读写时加载：用户说"记住/别忘了/以后…"、对话中出现可能长期有用的偏好或事实、用户要求忘记或修改记忆、或要把记忆放进给 Codex 的 prompt。规定显式记忆立即 memory_write 并发 memory_saved 卡；推断偏好先作候选并只轻量确认一次；禁止存储密码、证件号、银行卡等机密；健康和财务仅在用户明确要求时记录；更新而非重复；按要求删除；prompt 中最小必要地使用记忆。
 ---
 
+[English](SKILL.en.md) | **简体中文**
+
 # memory-policy：记什么、怎么记、怎么用
 
 ## 1. 记忆结构

@@ -4,9 +4,9 @@
 
 # Orbit
 
-**住在你 Mac 上的私人管家：Codex 做大脑，专用安卓手机做手，iPhone 上和你说话。**
+**English** | [简体中文](README.zh-CN.md)
 
-A personal butler that lives on your Mac — Codex as the brain, a dedicated Android phone as the hands, your iPhone as the face.
+A personal butler that lives on your Mac: Codex is the brain, a dedicated Android phone is the hands, and your iPhone is the face.
 
 <img src="https://img.shields.io/badge/status-experimental-orange" alt="experimental" />
 <img src="https://img.shields.io/badge/host-macOS-black?logo=apple" alt="macOS" />
@@ -18,89 +18,94 @@ A personal butler that lives on your Mac — Codex as the brain, a dedicated And
 </div>
 
 > [!WARNING]
-> **这是一个实验性项目，实际使用大概率达不到你的预期。**
-> 项目基本是 vibe coding 写出来的，有不少 bug，适合拿来研究和拆着玩，不建议托付重要的事情。
+> **This is an experimental project and real-world use is likely to fall short of your expectations.**
+> The project was largely built through vibe coding and has plenty of bugs. It is suitable for exploration and experimentation, but should not be trusted with important tasks.
 
 <p align="center">
-  <img src="docs/design/promo/orbit-promo-overview.png" alt="Orbit 效果图" />
+  <img src="docs/design/promo/orbit-promo-overview.png" alt="Orbit preview" />
 </p>
 
-## Orbit 是什么
+## What is Orbit?
 
-Orbit 是一个自托管的私人管家，由四部分组成：
-- **大脑**：在你的 Mac 上运行，基于 OpenAI Codex。
-- **手**：一部专用安卓手机，通过 USB ADB 操作，去点外卖、查快递、订票、比价。
-- **脸**：iPhone 上的 Orbit App，和你聊天、给你推送、请你审批。
-- **中间**：一个 Cloudflare Relay，只转发加密后的消息。
+Orbit is a self-hosted personal butler made up of four parts:
 
-它不是一问一答的聊天机器人。它会长期记住你的事，定时主动看一眼该关心的东西，手机来了重要通知会自己判断要不要告诉你，需要你拍板时才打扰你。
+- **Brain:** Runs on your Mac and is powered by OpenAI Codex.
+- **Hands:** A dedicated Android phone controlled over USB ADB to order food, check deliveries, book tickets, and compare prices.
+- **Face:** The Orbit app on your iPhone, where you chat, receive notifications, and approve requests.
+- **Relay:** A Cloudflare relay that only forwards encrypted messages.
 
-## 特点
+Orbit is not a one-question-at-a-time chatbot. It remembers things over time, periodically checks what may need attention, and decides whether an important phone notification is worth bringing to you. It only interrupts you when a decision needs your input.
 
-### 站在 Codex 成熟的 agent 工程上
-- **大脑**是一个长期运行的 Codex thread（`codex app-server` JSON-RPC）。管家的能力以 dynamic tools 的形式提供：任务、记忆、推送、审批、生成式卡片等。
-- **复杂任务**派给独立的 Codex worker 会话：查资料、写代码、操作电脑、操作手机。它们可以并行，可以中断和取消，过程会留下审计记录。
-- **计费**走你自己的 Codex（ChatGPT）额度，不需要单独申请 API Key。
-- **技能**用 `skills/` 里的 Markdown 描述：行为准则、Codex 编排、生成式 UI、国内服务发现、记忆规则、手机操作规则。改一个文件就能改它的做事方式。
+## Features
 
-### 主动，而不是被动
-- **心跳**：管家定时醒来，看看日程、待办和进行中的任务，有事才开口。心跳可以单独设置模型和推理强度。
-- **手机通知唤醒**：专用手机收到新通知时，管家会看一眼再决定要不要告诉你、怎么说。广告和群聊刷屏直接忽略，验证码不会被转述。
-- **APNs 推送分级**：只记录、静默、普通、时效性四级。每天有通知预算，还有静默时段，免得一天被打扰几十次。
-- **Live Activity**：在锁屏和灵动岛上显示进行中的任务。
+### Built on Codex's mature agent infrastructure
 
-### 更像一个人
-- **长期记忆**：有明确的记忆规则，记该记的，不乱记。
-- **动态上下文**：空闲时自动压缩对话上下文，任务执行中不压缩，长期使用也不会越聊越慢、越聊越贵。
-- **说人话**：界面上不显示「正在调用某某工具」这类技术细节，等待时只显示一个克制的打字动画。
-- **生成式卡片**：地点、链接、图片、任务进度用卡片呈现，不是一大段文字。
-- **知道分寸**：
-  - 默认只查询。付款要你明确授权。
-  - 登录、验证码、扫码、人脸交给你处理。
-  - 敏感操作在 iPhone 上审批。
-  - 任务可以随时打断。
-- **懂国内生活**：内置美团、淘宝、京东、12306、高德等常用服务的选择方法。微信在专用手机上用不了，管家会找替代路线，实在不行交还给你。
+- The **brain** is a long-running Codex thread (`codex app-server` JSON-RPC). Butler capabilities are exposed as dynamic tools for tasks, memory, notifications, approvals, generative cards, and more.
+- **Complex tasks** are delegated to independent Codex worker sessions for research, coding, computer use, or phone use. They can run in parallel, be interrupted or cancelled, and leave audit records.
+- **Billing** uses your own Codex (ChatGPT) quota; no separate API key is required.
+- **Skills** are Markdown files under `skills/` that describe behavior, Codex orchestration, generative UI, domestic service discovery, memory rules, and phone operation. Editing a file can change how the butler works.
 
-### 隐私与安全
-- **端到端加密**：iPhone 和 Mac 之间用 X25519、HKDF、ChaCha20-Poly1305 加密，配对时核对 SAS 短码，Relay 只能看到密文。
-- **Host 身份**：用 Ed25519 鉴权，Relay 可以设白名单（`ALLOWED_HOST_IDS`）。
-- **手机端**：截图里的密码页会被识别成敏感页面，结构树里的输入内容会脱敏，最终截图留证保存在本地。
+### Proactive, not just reactive
 
-## 效果图
+- **Heartbeat:** The butler wakes on a schedule to check your calendar, to-dos, and active tasks, and speaks only when there is something to report. You can set a separate model and reasoning effort for the heartbeat.
+- **Phone notification wake-up:** When the dedicated phone receives a notification, the butler reviews it and decides whether and how to tell you. It ignores ads and noisy group chats and never repeats verification codes.
+- **Tiered APNs notifications:** Four levels—record only, silent, ordinary, and time-sensitive—with a daily notification budget and quiet hours to avoid dozens of interruptions a day.
+- **Live Activity:** Shows active task progress on the Lock Screen and Dynamic Island.
+
+### More human
+
+- **Long-term memory:** Clear rules guide what to remember and prevent indiscriminate storage.
+- **Dynamic context:** The conversation context is compacted automatically while idle, but not during task execution, so long-term use does not keep getting slower or more expensive.
+- **Natural language:** The interface does not show technical details such as “calling tool X”; while waiting, it shows only a restrained typing animation.
+- **Generative cards:** Places, links, images, and task progress appear as cards instead of a wall of text.
+- **Knows its limits:**
+  - Queries are read-only by default. Payment requires your explicit authorization.
+  - You handle sign-ins, verification codes, QR scans, and face recognition.
+  - Sensitive actions require approval on the iPhone.
+  - Tasks can be interrupted at any time.
+- **Understands life in China:** Includes methods for using common services such as Meituan, Taobao, JD.com, 12306, and Amap. WeChat is unavailable on the dedicated phone, so the butler looks for another route or hands the task back to you when none is available.
+
+### Privacy and security
+
+- **End-to-end encryption:** iPhone and Mac messages use X25519, HKDF, and ChaCha20-Poly1305. Pairing verifies a short SAS code; the relay sees only ciphertext.
+- **Host identity:** Authenticated with Ed25519. The relay can enforce an allowlist (`ALLOWED_HOST_IDS`).
+- **On the phone:** Password pages in screenshots are identified as sensitive, input values in the UI tree are redacted, and final evidence screenshots are stored locally.
+
+## Screenshots
 
 <table>
   <tr>
-    <td><img src="docs/design/promo/orbit-promo-1.png" alt="效果图 1" /></td>
-    <td><img src="docs/design/promo/orbit-promo-2.png" alt="效果图 2" /></td>
-    <td><img src="docs/design/promo/orbit-promo-3.png" alt="效果图 3" /></td>
+    <td><img src="docs/design/promo/orbit-promo-1.png" alt="Screenshot 1" /></td>
+    <td><img src="docs/design/promo/orbit-promo-2.png" alt="Screenshot 2" /></td>
+    <td><img src="docs/design/promo/orbit-promo-3.png" alt="Screenshot 3" /></td>
   </tr>
   <tr>
-    <td><img src="docs/design/promo/orbit-promo-4.png" alt="效果图 4" /></td>
-    <td><img src="docs/design/promo/orbit-promo-5.png" alt="效果图 5" /></td>
-    <td><img src="docs/design/promo/orbit-promo-6.png" alt="效果图 6" /></td>
+    <td><img src="docs/design/promo/orbit-promo-4.png" alt="Screenshot 4" /></td>
+    <td><img src="docs/design/promo/orbit-promo-5.png" alt="Screenshot 5" /></td>
+    <td><img src="docs/design/promo/orbit-promo-6.png" alt="Screenshot 6" /></td>
   </tr>
 </table>
 
-## 架构
+## Architecture
 
 ```mermaid
 flowchart LR
-  subgraph IOS["iPhone · Orbit App（SwiftUI）"]
-    A["聊天 · 生成式卡片<br/>审批 · 任务 · Live Activity"]
+  subgraph IOS["iPhone · Orbit App (SwiftUI)"]
+    A["Chat · Generative cards<br/>Approvals · Tasks · Live Activity"]
   end
-  subgraph CF["Cloudflare Relay（Worker + Durable Objects）"]
-    R["配对 · 转发密文<br/>APNs 推送"]
+  subgraph CF["Cloudflare Relay (Worker + Durable Objects)"]
+    R["Pairing · Forward ciphertext<br/>APNs notifications"]
   end
-  subgraph MAC["Mac · Orbit Host（TypeScript）"]
-    B["管家大脑<br/>Codex thread + dynamic tools"]
+  subgraph MAC["Mac · Orbit Host (TypeScript)"]
+    B["Butler brain<br/>Codex thread + dynamic tools"]
     W["Codex workers<br/>codex app-server"]
-    S[("记忆 · 任务 · 审计<br/>SQLite")]
+    S[("Memory · Tasks · Audit<br/>SQLite")]
     K["Skills"]
   end
-  subgraph AND["专用 Android 手机"]
-    P["orbit_phone MCP<br/>截图 · 结构树 · 点击 · 输入"]
+  subgraph AND["Dedicated Android phone"]
+    P["orbit_phone MCP<br/>Screenshots · UI tree · Tap · Type"]
   end
-  A <-->|"端到端加密"| R
+  A <-->|"End-to-end encryption"| R
   R <-->|"WSS"| B
   B --> W
   B --- S
@@ -109,84 +114,84 @@ flowchart LR
   R -.->|"APNs"| A
 ```
 
-| 目录 | 内容 |
+| Directory | Contents |
 |---|---|
-| [`host/`](host/README.md) | Mac 端 Host（TypeScript / Node）：管家大脑、Codex 编排、任务、记忆、心跳、推送、手机任务 |
-| [`relay/`](relay/README.md) | Cloudflare Worker + Durable Objects：Host 鉴权、设备配对、转发密文、APNs |
-| [`ios/`](ios/) | iPhone 客户端（SwiftUI，xcodegen 生成工程）：聊天、生成式卡片、审批、Live Activity、小组件 |
-| [`phone/`](phone/) | `orbit_phone`：Android 自动化 MCP 服务（Python），0–999 坐标、截图、结构树、ADB Keyboard 输入、设备锁、留证 |
-| [`skills/`](skills/README.md) | 管家技能：行为准则、Codex 编排、生成式 UI、国内服务、记忆规则、手机操作 |
-| [`docs/`](docs/) | 端到端加密协议、设计稿、效果图 |
+| [`host/`](host/README.md) | Mac Host (TypeScript / Node): butler brain, Codex orchestration, tasks, memory, heartbeat, notifications, and phone tasks |
+| [`relay/`](relay/README.md) | Cloudflare Worker + Durable Objects: Host authentication, device pairing, ciphertext forwarding, and APNs |
+| [`ios/`](ios/) | iPhone client (SwiftUI, project generated by xcodegen): chat, generative cards, approvals, Live Activity, and widgets |
+| [`phone/`](phone/) | `orbit_phone`: Android automation MCP service (Python), 0–999 coordinates, screenshots, UI tree, ADB Keyboard input, device lock, and evidence |
+| [`skills/`](skills/README.md) | Butler skills: behavior rules, Codex orchestration, generative UI, domestic services, memory, and phone operation |
+| [`docs/`](docs/) | End-to-end encryption protocol, design documents, and screenshots |
 
-## 部署
+## Deployment
 
-### 你需要准备
+### What you need
 
-| 项 | 说明 |
+| Item | Details |
 |---|---|
-| Mac | macOS，Node.js ≥ 22.13，Python ≥ 3.11 和 [uv](https://docs.astral.sh/uv/) |
-| Codex | 安装 [Codex CLI](https://github.com/openai/codex) 并用 ChatGPT 账号登录（`codex login`） |
-| Cloudflare 账号 | 用来部署 Relay，需要 Workers 和 Durable Objects |
-| iPhone | iOS 18+，以及装有 Xcode 和 [xcodegen](https://github.com/yonaskolb/XcodeGen) 的 Mac |
-| 专用 Android 手机 | Android 11+，打开 USB 调试，装好 [ADB Keyboard](https://github.com/senzhk/ADBKeyBoard)，Mac 上要有 adb（platform-tools）。小米 / HyperOS 还要打开「USB 调试（安全设置）」 |
-| Apple 开发者账号（可选） | 推送通知需要。没有的话只能用免费账号自签，App 7 天过期，也收不到推送 |
+| Mac | macOS, Node.js ≥ 22.13, Python ≥ 3.11, and [uv](https://docs.astral.sh/uv/) |
+| Codex | Install [Codex CLI](https://github.com/openai/codex) and sign in with a ChatGPT account (`codex login`) |
+| Cloudflare account | For deploying the relay; Workers and Durable Objects are required |
+| iPhone | iOS 18+, and a Mac with Xcode and [xcodegen](https://github.com/yonaskolb/XcodeGen) |
+| Dedicated Android phone | Android 11+, USB debugging enabled, [ADB Keyboard](https://github.com/senzhk/ADBKeyBoard) installed, and adb (platform-tools) on the Mac. Xiaomi / HyperOS also requires “USB debugging (Security settings)” |
+| Apple Developer account (optional) | Required for push notifications. Without one, you can self-sign with a free account, but the app expires after 7 days and cannot receive push notifications |
 
-### 0. 获取代码
+### 0. Get the code
 
 ```bash
 git clone https://github.com/HerrysYu/orbit.git
 cd orbit
 ```
 
-### 1. 部署 Relay
+### 1. Deploy the relay
 
 ```bash
 cd relay
 npm install
 npx wrangler login
-npx wrangler deploy        # 记下输出的 https://<name>.<subdomain>.workers.dev
+npx wrangler deploy        # note the https://<name>.<subdomain>.workers.dev URL printed by the command
 ```
 
-- 打开 `relay/wrangler.toml`，把 `ALLOWED_HOST_IDS` 改成你自己 Host 的 hostId，或者留空表示不限制。改完后重新部署。
-- 推送需要 APNs 密钥。在 Apple 开发者后台创建一个启用了 APNs 的 **Key**，下载 `.p8` 文件。注意要的是 `.p8` 密钥，不是 `.cer` 证书。然后执行：
+- Open `relay/wrangler.toml` and set `ALLOWED_HOST_IDS` to your Host's hostId, or leave it empty for no restriction. Redeploy after changing it.
+- Push notifications require an APNs key. In the Apple Developer portal, create a **Key** with APNs enabled and download the `.p8` file. You need the `.p8` key, not a `.cer` certificate. Then run:
   ```bash
-  npx wrangler secret put APNS_KEY_P8    # 粘贴 .p8 文件的完整内容
-  npx wrangler secret put APNS_KEY_ID    # 10 位 Key ID
-  npx wrangler secret put APNS_TEAM_ID   # 10 位 Team ID
+  npx wrangler secret put APNS_KEY_P8    # paste the full contents of the .p8 file
+  npx wrangler secret put APNS_KEY_ID    # 10-character Key ID
+  npx wrangler secret put APNS_TEAM_ID   # 10-character Team ID
   ```
-- 详细说明和排错见 [relay/README.md](relay/README.md)。
+- See [relay/README.md](relay/README.md) for details and troubleshooting.
 
-### 2. 启动 Mac 端 Host
+### 2. Start the Mac Host
 
 ```bash
 cd host
 npm install
-npx tsx src/cli.ts config relay wss://<你的-worker>.workers.dev
-npx tsx src/cli.ts install-skills     # 安装 skills/ 里的技能
-npx tsx src/cli.ts start              # 启动管家
-npx tsx src/cli.ts launchd            # 可选：生成登录自启的 LaunchAgent
+npx tsx src/cli.ts config relay wss://<your-worker>.workers.dev
+npx tsx src/cli.ts install-skills     # install the skills in skills/
+npx tsx src/cli.ts start              # start the butler
+npx tsx src/cli.ts launchd            # optional: create a LaunchAgent that starts at login
 ```
 
-### 3. 准备专用安卓手机
+### 3. Prepare the dedicated Android phone
 
-1. 手机用 USB 连上 Mac，在手机上信任这台电脑。
-2. 运行：
+1. Connect the phone to the Mac over USB and trust this computer on the phone.
+2. Run:
    ```bash
    cd host
-   npx tsx src/cli.ts phone setup        # 在 ../phone 里执行 uv sync
-   npx tsx src/cli.ts phone status       # 检查 ADB 设备、输入法、安全调试设置
+   npx tsx src/cli.ts phone setup        # run uv sync under ../phone
+   npx tsx src/cli.ts phone status       # check ADB device, keyboard, and security debugging settings
    ```
-3. 默认只操作一台手机。连了多台时，用 `OPA_PHONE_SERIAL` 指定序列号。
+3. By default, Orbit operates one phone. If multiple phones are connected, set `OPA_PHONE_SERIAL` to select a serial number.
 
-更多选项见 [host/README.md](host/README.md)。
+See [host/README.md](host/README.md) for more options.
 
-Host 还内置高德、12306、飞书、Playwright、网页读取、Tavily、GitHub 和 Notion 的 MCP 目录，按任务选择加载。用 `opa mcp list` 查看状态、`opa mcp init` 初始化本地配置；需要 Key 的服务另行填写凭据。参见 [服务与 ModelScope 导入说明](docs/mcp-services.md)。
+The Host also includes an MCP directory for Amap, 12306, Feishu, Playwright, web fetching, Tavily, GitHub, and Notion. Services are loaded per task. Run `opa mcp list` to view their status and `opa mcp init` to create local configuration; enter credentials separately for services that require keys. See [Services and ModelScope import](docs/mcp-services.md).
 
-Gmail、Notion、Google Calendar 和 Google Drive 可复用 Codex 已连接的插件；Google Docs 由 Drive 的文档工具提供。管家先核实当前接口与权限，能用服务 MCP / 插件完成的步骤优先走接口，再考虑网页和电脑 / 手机界面。
+Gmail, Notion, Google Calendar, and Google Drive can use plugins already connected to Codex; Google Docs is provided through Drive's document tools. The butler first checks the available interfaces and permissions. It prefers service MCPs or plugins when they cover a step, then considers a website, and uses a computer or phone interface only when needed.
 
-App 聊天页右上角菜单可「清除聊天记录」，确认后同步清空聊天并重置当前对话；长期记忆、任务和配对信息保留。此功能需要新版 Host 和 App。
+Choose **「清除聊天记录」(Clear chat history)** from the menu in the upper-right corner of the App chat page. After confirmation, it clears the chat and resets the current conversation; long-term memory, tasks, and pairing information are retained. This feature requires an updated Host and App.
 
-### 4. 安装 iPhone 客户端（自签）
+### 4. Install the iPhone client (self-signing)
 
 ```bash
 brew install xcodegen
@@ -195,44 +200,44 @@ xcodegen generate
 open OPA.xcodeproj
 ```
 
-- 先改 `ios/project.yml`：把 `DEVELOPMENT_TEAM` 改成你的 Team ID，`APP_BUNDLE_ID` 改成你自己的 Bundle ID，然后重新运行 `xcodegen generate`。
-- 在 Xcode 里选中你的 iPhone，点 Run。第一次运行要在手机上信任开发者：设置 → 通用 → VPN 与设备管理。
-- 推送要用 App 的 Bundle ID 作为 APNs topic，并且需要付费开发者账号。
+- First edit `ios/project.yml`: set `DEVELOPMENT_TEAM` to your Team ID and `APP_BUNDLE_ID` to your Bundle ID, then run `xcodegen generate` again.
+- In Xcode, select your iPhone and click Run. The first time, trust the developer on the phone under Settings → General → VPN & Device Management.
+- Push notifications use the App's Bundle ID as the APNs topic and require a paid Apple Developer account.
 
-### 5. 配对
+### 5. Pair
 
 ```bash
 cd host
-npx tsx src/cli.ts pair       # 终端显示二维码
+npx tsx src/cli.ts pair       # displays a QR code in the terminal
 ```
 
-用 iPhone 上的 Orbit 扫码，核对两边显示的 SAS 短码一致后确认。之后就可以在 App 里和管家说话了。也可以用 `npx tsx src/cli.ts chat` 在终端里直接对话。
+Scan it with Orbit on the iPhone. Confirm only after the SAS codes shown on both devices match. You can then chat with the butler in the App. You can also run `npx tsx src/cli.ts chat` to chat directly in the terminal.
 
-## 不足
+## Limitations
 
-坦白说，Orbit 现在还有很多不足：
+To be candid, Orbit still has many limitations:
 
-- **平台**：
-  - 电脑端只支持 macOS。
-  - 专用手机只支持 Android。
-  - 客户端只有 iOS。
-- **Live Activity** 还有 bug，状态偶尔不同步。
-- **推送通知**需要付费的 Apple 开发者账号，才能申请 APNs 密钥。
-- **客户端**需要自己用 Xcode 签名安装。免费账号签的 App 7 天就过期。
-- **大脑模型的 harness 写得不好**：工具设计、提示词和上下文组织都还很粗糙。
-- **模型在 CLI 和 computer use 之间选路效率低**：明明一条命令能办的事，有时会去点界面，反过来也一样。
-- **模型可能没有针对 phone use 做过 RL**：UI 操作效率低，一步一看、比较慢。手机任务也比较耗 Codex 额度。
-- **微信**：专用安卓手机上用不了微信，微信里的小程序和公众号没有自动化通道。
+- **Platforms:**
+  - The computer-side Host supports macOS only.
+  - The dedicated phone supports Android only.
+  - The client is available for iOS only.
+- **Live Activity** still has bugs, and its status may occasionally become unsynchronized.
+- **Push notifications** require a paid Apple Developer account to obtain APNs keys.
+- **Client installation** requires signing with Xcode. Apps signed with a free account expire after 7 days.
+- **The brain's harness is rough:** Tool design, prompts, and context organization still need substantial work.
+- **Routing between the CLI and computer use is inefficient:** The model sometimes clicks through a UI when one command would do, and sometimes does the reverse.
+- **The model may not have been trained specifically for phone use:** UI operations can be slow, with an observe-after-each-step loop. Phone tasks also consume a fair amount of Codex quota.
+- **WeChat:** WeChat is unavailable on the dedicated Android phone, so there is no automation path for WeChat mini programs or public accounts.
 
-## 联系与支持
+## Contact and support
 
-- 邮箱：[herrys@another-startup.com](mailto:herrys@another-startup.com)
-- 欢迎提 Issue 和 PR。这是个实验性项目，回复可能不及时。
+- Email: [herrys@another-startup.com](mailto:herrys@another-startup.com)
+- Issues and PRs are welcome. This is an experimental project, so responses may be delayed.
 
-如果这个项目帮到了你，可以考虑请我喝杯咖啡。
+If this project has helped you, consider buying me a coffee.
 
 <p align="center">
-  <img src="docs/assets/wechat-pay.jpg" width="260" alt="微信收款码" />
+  <img src="docs/assets/wechat-pay.jpg" width="260" alt="WeChat payment QR code" />
 </p>
 
 ## License

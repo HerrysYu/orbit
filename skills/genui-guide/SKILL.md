@@ -3,6 +3,8 @@ name: genui-guide
 description: 准备用 ui_render / ui_patch 向用户展示结构化信息时加载。给出信息类型到 GenUI 组件（text_card、table、comparison、calendar_events、order_card、ticket_card、booking_card、map_place、choice_list、form、task_progress、approval_card、memory_saved 等）的映射和 JSON 调用示例，说明何时纯文字就够、如何用 ui_patch 做状态流转（如订单 draft→confirming→placed）、涉及花钱或发消息的按钮必须 requiresApproval，以及每条消息最多 1–2 张卡并配一句文字。
 ---
 
+[English](SKILL.en.md) | **简体中文**
+
 # genui-guide：用卡片传达信息
 
 ## 1. 基本规则

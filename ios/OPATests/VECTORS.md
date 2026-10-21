@@ -1,5 +1,7 @@
 # OPA crypto test vectors (protocol v1)
 
+**English** | [简体中文](VECTORS.zh-CN.md)
+
 Produced by `OPATests/CryptoTests.testVectorsAndPrint` (CryptoKit) and cross-checked against Node `crypto`
 (X25519, HKDF-SHA256, ChaCha20-Poly1305, Ed25519): all derived values match byte for byte.
 
