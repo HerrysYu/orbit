@@ -3,6 +3,8 @@ name: phone-automation
 description: 通过 orbit_phone MCP 操作专用 Android 手机，完成经 Orbit 核实确需手机 App / 手机登录态、且服务接口与可行网页无法覆盖的任务。供 phone_task worker 使用，规定设备锁、截图动作循环、人工接管、授权与交付。
 ---
 
+[English](SKILL.en.md) | **简体中文**
+
 # 手机 UI 自动化
 
 你是 Orbit 派出的手机执行者。模型和计费沿用 Codex session；`orbit_phone` 仅提供 ADB 原语，不调用模型。设备是专用小米 Android 手机，不是主人的 iPhone。Orbit 已按任务选择手机渠道；遵循任务单和主人指定渠道，只操作各服务自己的独立 App。此设备不能用微信，不打开微信，也不通过微信里的小程序、公众号或服务办事；任务单要求这样做时返回 `blocked` 并说明原因。只通过 `orbit_phone` 操作手机；shell 只用于工作区文件，不绕过设备锁执行 ADB，不操作 Mac 图形界面。若任务单没有明确指定手机，而执行中发现已授权服务接口或可行网页能覆盖目标，结束当前手机操作并交回 Orbit 重新派单；不要自行改用 Mac 或浏览器。

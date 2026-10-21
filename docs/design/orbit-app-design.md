@@ -1,433 +1,434 @@
-# Orbit App 设计说明与 Claude 执行简报
+# Orbit App Design Brief and Claude Implementation Instructions
 
-版本：v1.0 · 2026-10-15  
-目标平台：iPhone，原生 SwiftUI，项目方案最低 iOS 18  
-交付性质：产品界面与交互设计要求；本文不表示相关界面、素材或后端能力已经全部实现。
+**English** | [简体中文](orbit-app-design.zh-CN.md)
 
-## 1. 先理解这个产品
+Version: v1.0 · 2026-10-15  
+Target platform: iPhone, native SwiftUI, project minimum iOS 18  
+Deliverable type: Product interface and interaction requirements; this document does not mean the related UI, assets, or backend capabilities have all been implemented.
 
-Orbit 是一个常驻在用户 Mac 上、通过 iPhone 与用户协作的个人智能体。用户可以把一句话、图片、文件或链接交给它，它会拆解任务、调用工具、持续执行，并在需要用户参与时回来询问。
+## 1. Understand the product first
 
-核心体验是：**把事情交给一个可靠又可爱的小伙伴，随时知道它在做什么。**
+Orbit is a personal agent that stays on the user’s Mac and works with the user through an iPhone. The user can give it a sentence, image, file, or link. Orbit breaks the request into tasks, uses tools, continues working, and comes back to ask the user when their input is needed.
 
-App 必须同时表达两种感受：看见 Orbit 时觉得亲近；查看任务、授权操作和交付结果时觉得清楚、可信、可控。
+The core experience is: **hand something to a reliable, lovable companion and always know what it is doing.**
 
-首要用户路径：
+The App must express two things at once: Orbit should feel approachable, while task status, authorizations, and delivered results remain clear, trustworthy, and under the user’s control.
 
-1. 连接自己的 Mac。
-2. 告诉 Orbit 要做什么。
-3. 看见任务已经开始，以及当前在做哪一步。
-4. 必要时补充信息或批准某项具体操作。
-5. 收到可查看、可使用的结果。
+Primary user journey:
 
-## 2. 视觉参考与形象锁定
+1. Connect the user’s Mac.
+2. Tell Orbit what to do.
+3. See that the task has started and which step is in progress.
+4. Add information or approve a specific action when needed.
+5. Receive a result that can be viewed and used.
 
-以下图片是本次设计的主视觉依据，交给 Claude 时请同时提供原图文件。Markdown 图片在部分工具中不会自动被读取。
+## 2. Visual reference and character lock
 
-![Orbit 吉祥物设定图](./orbit-mascot-concept-v1.png)
+The image below is the primary visual reference for this design. Provide the original image to Claude as well. Some tools do not automatically read embedded Markdown images.
 
-参考文件：`docs/design/orbit-mascot-concept-v1.png`。同目录的 `orbit-mascot-concept-v1.prompt.txt` 保存了原始生成提示词。
+![Orbit mascot concept](./orbit-mascot-concept-v1.png)
 
-### 2.1 必须保留的角色特征
+Reference file: `docs/design/orbit-mascot-concept-v1.png`. The original generation prompt is in `orbit-mascot-concept-v1.prompt.txt` in the same directory.
 
-- 奶白色、柔软、略不对称的水滴 / 麻薯身体，悬浮，无腿。
-- 头顶一个偏向一侧的小翘角；不能改成两只耳朵或机械天线。
-- 深棕色豆豆眼、小嘴、克制的浅桃色腮红。
-- 一对小鳍状手，表情机灵、友善。
-- 一条杏橙色细星环斜绕身体，前后遮挡关系清楚。
-- 星环上只有一颗圆形小卫星，作为辨识点。
-- 材质是哑光软硅胶 / 软陶的轻柔质感，光照温暖，不使用金属和强镜面反射。
+### 2.1 Character features that must remain
 
-角色暂称 **Orbit 小星灵**，展示名使用 Orbit；中文昵称以后再定。参考 Grok bot、Muse 的方向仅限“角色有个性、易识别、可表达状态”，最终外形以本项目设定图为准。
+- A soft, slightly asymmetrical, cream-colored drop/mochi body, floating without legs.
+- One small tuft leaning to one side on top of the head; do not turn it into two ears or a mechanical antenna.
+- Dark-brown dot eyes, a small mouth, and restrained pale-peach blush.
+- A pair of small fin-like hands and an alert, friendly expression.
+- A thin apricot ring that slants around the body, with a clear front/back overlap.
+- Exactly one small round satellite on the ring as a distinguishing feature.
+- A gentle matte soft-silicone / soft-clay finish with warm lighting; do not use metal or strong specular reflections.
 
-### 2.2 从形象提取界面语言
+The character is provisionally called **Orbit 小星灵**; use Orbit as its display name and decide its Chinese nickname later. Grok bot and Muse are references only for “a character with personality that is easy to recognize and can express states”; the final appearance must follow this project’s concept image.
 
-- 奶白身体 → 温暖浅色背景和柔和层次。
-- 杏橙星环 → 关键操作、选中态、小面积强调。
-- 深棕眼睛 → 主文字和高对比操作面。
-- 身体轮廓 → 连续圆角、柔和边缘和少量胶囊组件。
-- 悬浮感 → 浅阴影、轻层级，不把所有控件做成凸起软塑料。
-- 小卫星 → 状态变化和进度中的微小提示，不能代替明确文字。
+### 2.2 Derive the interface language from the character
 
-**3D 只用于角色资产。主要 UI 保持清爽、近乎平面的原生界面。** 不把每个按钮、卡片和图标都做成 3D 玩具。
+- Cream body → warm light backgrounds and soft layers.
+- Apricot ring → key actions, selected states, and small areas of emphasis.
+- Dark-brown eyes → primary text and high-contrast action surfaces.
+- Body silhouette → continuous corner radii, soft edges, and a few capsule components.
+- Floating quality → light shadows and gentle hierarchy; do not make every control look like raised soft plastic.
+- Satellite → subtle cues for state changes and progress; it cannot replace clear text.
 
-## 3. 整体美术方向
+**Use 3D only for character assets. Keep the main UI a clean, nearly flat native interface.** Do not turn every button, card, and icon into a 3D toy.
 
-关键词：温暖、柔软、轻盈、安静、有一点俏皮。
+## 3. Overall art direction
 
-页面留白充足，内容使用清晰的文字层级。品牌感主要来自颜色、角色、圆角与细节，不依赖满屏装饰。
+Keywords: warm, soft, light, calm, slightly playful.
 
-视觉优先级：当前需要处理的事 → 主要内容与结果 → 下一步操作 → 陪伴氛围。
+Leave plenty of open space and use clear text hierarchy. Build brand recognition mainly through color, character, rounded shapes, and details, not screen-filling decoration.
 
-避免以下偏差：
+Visual priority: what needs attention now → main content and result → next action → companion atmosphere.
 
-- 科幻驾驶舱、蓝紫霓虹、满屏星空、发光网格和星球壁纸。
-- 每个页面都放巨大吉祥物，或在每条消息边重复完整形象。
-- 糖果色混用、儿童游戏式按钮、过多表情符号、撒花和徽章。
-- 所有内容都装进同样的大圆角卡片，导致层次单调。
-- 用可爱话术淡化失败、费用、外部发送和删除等实际后果。
-- 把产品做成带营销首屏的网页，或在页面里画假手机外壳。
+Avoid these directions:
+
+- Sci-fi cockpit, blue-purple neon, a screen full of stars, glowing grids, and planet wallpaper.
+- A giant mascot on every page or a full character repeated beside every message.
+- Candy colors mixed together, children’s-game buttons, too many emojis, confetti, and badges.
+- Putting everything in identical large rounded cards until the hierarchy becomes monotonous.
+- Using cute copy to soften real consequences such as failure, cost, external sending, and deletion.
+- Making the product look like a marketing landing page or drawing a fake phone frame around the UI.
 
 ## 4. Design tokens
 
-下面是第一版建议值，不是从设定图精确取色的结果。Claude 应使用语义 token，并在实际界面验证文字、图标、焦点和状态对比度。不要在各页面临时添加颜色。
-
-### 4.1 浅色模式
-
-```json
-{
-  "canvas": "#FAF7F2",
-  "surface": "#FFFFFF",
-  "surfaceInset": "#F1EBE3",
-  "ink": "#302B27",
-  "inkSecondary": "#6D6259",
-  "inkTertiary": "#7E7268",
-  "hairline": "#DED5CA",
-  "brandApricot": "#F2A15F",
-  "brandSoft": "#FCE9D8",
-  "accentText": "#8C471B",
-  "primaryFill": "#302B27",
-  "onPrimary": "#FFFDF9",
-  "userBubble": "#FCE9D8",
-  "onUserBubble": "#302B27",
-  "success": "#326447",
-  "successSoft": "#E9F2E9",
-  "warning": "#875015",
-  "warningSoft": "#FFF0D6",
-  "danger": "#AC3932",
-  "dangerSoft": "#FBE9E5",
-  "link": "#8C471B"
-}
-```
-
-杏橙色用作视觉锚点。普通小字使用 `accentText`，不要在浅杏橙底上放白色小字。主要实心按钮使用深棕底配奶白字；浅杏橙按钮配深棕字。状态色必须结合图标与文字表达。
-
-### 4.2 深色模式
-
-```json
-{
-  "canvas": "#191715",
-  "surface": "#24211E",
-  "surfaceInset": "#302B26",
-  "ink": "#F6EFE6",
-  "inkSecondary": "#C4B8AA",
-  "inkTertiary": "#A99B8D",
-  "hairline": "#51473E",
-  "brandApricot": "#F2AD73",
-  "brandSoft": "#453022",
-  "accentText": "#F2AD73",
-  "primaryFill": "#F2AD73",
-  "onPrimary": "#241A13",
-  "userBubble": "#453022",
-  "onUserBubble": "#F6EFE6",
-  "success": "#91C7A2",
-  "successSoft": "#23362A",
-  "warning": "#E7BA73",
-  "warningSoft": "#3E301D",
-  "danger": "#F39C91",
-  "dangerSoft": "#412724",
-  "link": "#F2AD73"
-}
-```
+These are first-version recommendations, not values sampled precisely from the concept image. Claude should use semantic tokens and verify text, icon, focus, and status contrast in the actual interface. Do not introduce ad hoc colors page by page.
+
+### 4.1 Light mode
+
+    {
+      "canvas": "#FAF7F2",
+      "surface": "#FFFFFF",
+      "surfaceInset": "#F1EBE3",
+      "ink": "#302B27",
+      "inkSecondary": "#6D6259",
+      "inkTertiary": "#7E7268",
+      "hairline": "#DED5CA",
+      "brandApricot": "#F2A15F",
+      "brandSoft": "#FCE9D8",
+      "accentText": "#8C471B",
+      "primaryFill": "#302B27",
+      "onPrimary": "#FFFDF9",
+      "userBubble": "#FCE9D8",
+      "onUserBubble": "#302B27",
+      "success": "#326447",
+      "successSoft": "#E9F2E9",
+      "warning": "#875015",
+      "warningSoft": "#FFF0D6",
+      "danger": "#AC3932",
+      "dangerSoft": "#FBE9E5",
+      "link": "#8C471B"
+    }
 
-深色是温暖炭灰与奶白的组合。角色保持奶白本色，通过透明背景融入界面；不能把白色底图直接贴成一个亮方块。
+Apricot is the visual anchor. Use `accentText` for ordinary small text; do not put small white text on a light apricot background. Primary solid buttons use a dark-brown background with cream text; light-apricot buttons use dark-brown text. Always pair status color with an icon and text.
 
-### 4.3 字体、尺寸与间距
+### 4.2 Dark mode
 
-- 优先使用 iOS 系统字体；中文使用系统中文字体，英文由系统自然匹配。
-- 欢迎标题建议 28–32 pt、semibold，可局部使用 rounded；正文保持系统默认字体设计。
-- 页面标题使用系统 title / largeTitle，卡片标题 headline，正文 body，次要说明 subheadline / footnote。
-- 正文基准约 17 pt；辅助信息约 13–15 pt，不以极小浅灰字换取“精致”。
-- 支持 Dynamic Type，字号是默认参考，不锁死文字容器高度。
-- 页面水平边距默认 20 pt，小屏可为 16 pt；主要区块间距 24–32 pt；组件内部间距 12–16 pt；关联信息 4–8 pt。
-- 复用项目现有 4 pt 节奏，现有 2 pt 细调值和 28 pt 间距可以保留。
-- 卡片连续圆角 22 pt，输入区 20–24 pt，小组件 12–14 pt；普通设置行不额外套卡片。
-- 按钮通常高 48–52 pt，所有可点击目标至少 44 × 44 pt。
-- 浅色卡片最多使用一组轻阴影；深色优先靠表面色区分。正文区域不使用大范围模糊或渐变。
+    {
+      "canvas": "#191715",
+      "surface": "#24211E",
+      "surfaceInset": "#302B26",
+      "ink": "#F6EFE6",
+      "inkSecondary": "#C4B8AA",
+      "inkTertiary": "#A99B8D",
+      "hairline": "#51473E",
+      "brandApricot": "#F2AD73",
+      "brandSoft": "#453022",
+      "accentText": "#F2AD73",
+      "primaryFill": "#F2AD73",
+      "onPrimary": "#241A13",
+      "userBubble": "#453022",
+      "onUserBubble": "#F6EFE6",
+      "success": "#91C7A2",
+      "successSoft": "#23362A",
+      "warning": "#E7BA73",
+      "warningSoft": "#3E301D",
+      "danger": "#F39C91",
+      "dangerSoft": "#412724",
+      "link": "#F2AD73"
+    }
 
-## 5. 信息架构与导航
+Dark mode combines warm charcoal with cream. Keep the character cream-colored and blend it into the interface through a transparent background; do not paste a white-backed image as a bright rectangle.
 
-沿用已有三个底部入口：**对话 / 任务 / 设置**。初次进入且尚未配对时显示连接引导。
+### 4.3 Typography, sizing, and spacing
 
-- 对话：表达需求、补充信息、查看回复和交互卡片，也是默认首页。
-- 任务：集中了解进行中的工作、待确认事项和已完成结果。
-- 设置：管理 Orbit、连接、记忆、主动程度、通知及权限。
+- Prefer iOS system fonts; use the system Chinese font for Chinese and let the system match English naturally.
+- Welcome title: 28–32 pt, semibold, optionally rounded for selected text. Keep body text in the system’s default font design.
+- Use the system title / largeTitle for page titles, headline for card titles, and body, subheadline, or footnote for supporting copy.
+- Body text is about 17 pt; supporting information about 13–15 pt. Do not use tiny pale-gray text to make the interface look “refined.”
+- Support Dynamic Type. Treat sizes as defaults and do not lock text-container heights.
+- Default horizontal page margin: 20 pt, or 16 pt on small screens; main section spacing: 24–32 pt; component padding: 12–16 pt; related information: 4–8 pt.
+- Reuse the project’s existing 4 pt rhythm. Existing 2 pt adjustments and 28 pt spacing may remain.
+- Continuous card radius 22 pt; composer 20–24 pt; small components 12–14 pt. Do not add extra cards around ordinary settings rows.
+- Buttons are usually 48–52 pt high; all tappable targets are at least 44 × 44 pt.
+- Light cards may use at most one soft shadow. In dark mode, distinguish surfaces primarily by color. Do not use broad blur or gradients in body content.
 
-首版不新增独立“首页”“发现”“商城”“成就”或“角色养成”入口。记忆和设备管理放在设置下一级，生成结果优先归属于对应任务或对话。
+## 5. Information architecture and navigation
 
-导航使用原生 TabView 与 NavigationStack。底部栏、输入区和 Sheet 可使用克制的系统材质；具体外观遵循目标系统可用能力，不能要求只能在新系统运行的效果。
+Keep the existing three bottom destinations: **Chat / Tasks / Settings**. Before pairing, show the connection guide on first launch.
 
-## 6. 关键页面设计
+- Chat: express requests, add information, view replies and interactive cards; also the default home screen.
+- Tasks: see ongoing work, things awaiting confirmation, and completed results together.
+- Settings: manage Orbit, connections, memory, proactivity, notifications, and permissions.
 
-### 6.1 欢迎与 Mac 配对
+Do not add separate “Home,” “Discover,” “Store,” “Achievements,” or “Character growth” destinations in the first release. Put memory and device management one level under Settings. Associate generated results with their task or conversation where possible.
 
-目的：让用户理解 Orbit 的运行方式，并完成手机与 Mac 的连接。
+Use native TabView and NavigationStack. The tab bar, composer, and sheets may use restrained system materials. Follow the capabilities of the target OS; do not require effects that only work on a new OS version.
 
-页面上部放一个 150–190 pt 左右的挥手角色；标题“你好，我是 Orbit”；说明“连接你的 Mac，把想做的事交给我。”下方用三条短说明解释：在 Mac 上执行、手机随时查看、重要操作由你确认。
+## 6. Key screens
 
-主操作“连接我的 Mac”；后续进入扫描二维码页面。提供“粘贴配对链接”的替代入口；沿用已有演示模式时明确标注“体验演示”，不能看起来像已连接真实设备。
+### 6.1 Welcome and Mac pairing
 
-状态需包括：相机未授权、二维码无效或过期、正在连接、校验码核对、连接成功、连接失败及重试。核对页清楚展示 Mac 名称与六位校验码，用户可返回或取消。相机权限被拒后提供系统设置入口与链接配对方式。
+Purpose: explain how Orbit works and connect the phone to the Mac.
 
-连接成功后角色短暂挥手，按钮“开始和 Orbit 聊聊”。成功反馈可以直接衔接对话页，不增加必须阅读的长教程。
+Place a waving character around 150–190 pt high near the top. Title: “你好，我是 Orbit”. Description: “连接你的 Mac，把想做的事交给我。” Add three short points explaining that work runs on the Mac, the user can check from the phone at any time, and the user confirms important actions.
 
-### 6.2 对话首页：首次 / 空状态
+Primary action: “连接我的 Mac”, followed by QR scanning. Offer “粘贴配对链接” as an alternative. If the existing demo mode is used, label it clearly as “体验演示” so it cannot look like a real device connection.
 
-顶栏左侧显示 Orbit 名称与小头像，右侧是 Mac 连接状态入口。连接正常时保持低调，离线和需要处理的问题更明显。
+Support these states: camera not authorized, QR code invalid or expired, connecting, checking the verification code, connected, connection failed, and retry. The verification screen clearly shows the Mac name and six-digit code; the user can go back or cancel. If camera access is denied, provide the system Settings route and link pairing.
 
-内容区中上部放 112–144 pt 的角色，文字“今天想把什么交给我？”下面提供最多三个简短建议，例如“整理明天的日程”“帮我比较几个方案”“总结这份文件”。示例只填入草稿，由用户发送。
+On success, the character waves briefly and the button says “开始和 Orbit 聊聊”. The success feedback can go straight to Chat without requiring a long tutorial.
 
-底部输入区固定在键盘与安全区之上。默认提示“把想做的事交给 Orbit…”，左侧附件入口，右侧发送按钮。不要在首屏铺满功能卡片。
+### 6.2 Chat home: first use / empty state
 
-### 6.3 对话页：已有消息
+Show Orbit’s name and a small avatar on the left of the top bar; show the Mac connection entry on the right. Keep a healthy connection understated; make offline status and issues needing attention more visible.
 
-- 用户消息右对齐，浅杏橙气泡、深棕正文，最大宽度约内容区的 80%。
-- Orbit 回复左对齐，以清晰正文为主，通常不加厚重外框。头像只在新回复组开头出现，连续回复不重复。
-- 时间、工具细节和调试信息按需展开，主流只展示对用户有意义的步骤与结论。
-- 长内容支持段落、列表、链接和必要的代码块；表格和文件等结果用合适的专用视图。
-- 思考时显示小角色 / 简化星环与“正在想办法…”；执行时优先展示真实动作摘要，如“正在整理文件”。
-- 用户滚离底部后，流式回复不强制拉回；提供“有新回复”入口。只有原本位于底部时才跟随新内容。
-- 输入框最多自然增长到约六行，再内部滚动；附件显示名称 / 缩略图、上传状态和移除按钮。
-- 正在生成且无草稿时，发送位置可变为停止按钮；有草稿时允许发送补充指令。必须清楚区分“停止当前回复”和“取消整个任务”。
-- 语音输入尚未确认实现，首版主设计不放一个无法使用的麦克风按钮；后续可作为可选扩展。
+Place a 112–144 pt character in the upper-middle content area with “今天想把什么交给我？” and up to three short suggestions, such as “整理明天的日程”, “帮我比较几个方案”, and “总结这份文件”. Suggestions only fill a draft; the user sends it.
 
-键盘出现时收起空状态大角色，保留输入和最近内容。所有重要操作应能在单手持机时完成。
+Keep the composer fixed above the keyboard and safe area. Default placeholder: “把想做的事交给 Orbit…”. Put the attachment entry on the left and Send on the right. Do not fill the first screen with feature cards.
 
-### 6.4 任务列表
+### 6.3 Chat with existing messages
 
-顶部标题“任务”，右侧保留连接入口。待确认事项优先展示在列表上部；之后是进行中、遇到问题及最近完成的任务。
+- Align user messages to the right, with a light-apricot bubble and dark-brown text; maximum width about 80% of the content area.
+- Align Orbit replies to the left and prioritize clear body text, usually without a heavy frame. Show an avatar only at the start of a new reply group, not on consecutive replies.
+- Expand timestamps, tool details, and debug information only when requested. The main view shows steps and conclusions that matter to the user.
+- Long content supports paragraphs, lists, links, and necessary code blocks. Use suitable dedicated views for tables and files.
+- While thinking, show a small character / simplified ring with “正在想办法…”. During execution, prefer a truthful action summary such as “正在整理文件”.
+- Do not force-scroll when the user has moved away from the bottom. Show a “有新回复” entry for new streamed content. Follow new content only when the user was already at the bottom.
+- Let the composer grow naturally to about six lines, then scroll internally. Attachments show a name/thumbnail, upload status, and remove button.
+- While generating with no draft, the send position may become a Stop button. With a draft, allow the user to send an additional instruction. Clearly distinguish “stop the current reply” from “cancel the whole task.”
+- Voice input is not confirmed as implemented. Do not put a nonfunctional microphone button in the first-release design; it may be an optional extension later.
 
-优先用分区组织信息；任务较多时可增加“进行中 / 已完成 / 全部”筛选。筛选属于建议界面能力，实施前检查现有数据是否足够。
+When the keyboard appears, hide the large empty-state character and keep the composer and recent content. Important actions should be reachable one-handed.
 
-每个任务条目包括：任务标题、状态标签、当前步骤摘要、最近更新时间，以及确有依据的步骤进度。进行中任务可用左侧细杏橙色标记；完成项更紧凑，不持续播放庆祝动画。
+### 6.4 Task list
 
-不展示无来源的百分比或预计完成时间。仅有步骤计数时写“已完成 2 / 4 步”，并说明是步骤计数；无法量化时显示“进行中”与当前动作。
+Top title: “任务”, with the connection entry on the right. Show items needing confirmation first, then in-progress tasks, blocked tasks, and recently completed tasks.
 
-空状态使用 80–100 pt 角色，文字“这里会记录我替你做的事”，操作“去聊聊”。列表有内容后不保留占据大块屏幕的角色。
+Prefer organizing by sections. For many tasks, filters such as “进行中 / 已完成 / 全部” may be added. Filtering is a suggested UI capability; check that existing data supports it before implementation.
 
-### 6.5 任务详情
+Each task item includes a title, status label, current-step summary, last-updated time, and step progress only when supported by actual data. An in-progress task may have a thin apricot marker on the left. Completed items are more compact and do not play ongoing celebration animation.
 
-页面层级：任务标题和状态 → 目标简述 → 当前进度 / 等待原因 → 步骤时间线 → 结果 → 辅助操作。
+Do not show unsupported percentages or estimated completion times. If only step counts are available, say “已完成 2 / 4 步” and make clear that this is a step count. When progress cannot be quantified, show “进行中” and the current action.
 
-步骤展示待开始、进行中、完成、失败、跳过；展开后再显示更具体信息。当前步骤为视觉重点，不能让所有历史步骤一起闪动。
+The empty state uses an 80–100 pt character, text “这里会记录我替你做的事”, and action “去聊聊”. Once the list contains content, do not keep a character that occupies a large part of the screen.
 
-结果优先给可用入口，如“查看文档”“打开文件”“查看方案”；底层日志和执行会话放入“执行详情”。未实现的下载、分享、暂停或重试能力不能伪装成可用按钮。
+### 6.5 Task details
 
-用户能返回相关对话补充要求；若后端有取消能力，提供明确的“取消任务”入口，并解释取消请求尚未确认时的状态。不能点击后立即假装远端已停止。
+Page hierarchy: task title and status → short goal → current progress / reason for waiting → step timeline → result → secondary actions.
 
-### 6.6 需要确认的操作
+Show steps as not started, in progress, completed, failed, or skipped; reveal more detail only when expanded. Emphasize the current step; do not animate every historical step at once.
 
-采用稳定、清楚的卡片或 Sheet。明确展示将要执行什么、对象、范围及必要后果。例如发送消息时展示接收人和正文，付款时展示商户、项目、总额与币种。
+Prefer usable result entries such as “查看文档”, “打开文件”, or “查看方案”. Put low-level logs and execution sessions under “执行详情”. Do not present download, share, pause, or retry controls as functional if they are not implemented.
 
-按钮使用具体动词，如“批准发送”“确认预订”“拒绝”；避免只有“好的”或“继续”。不可逆或高风险操作显示合适的警示，按照服务端 `requireBiometric` 决定是否调用生物验证。
+Let the user return to the related conversation to add requirements. If the backend supports cancellation, provide a clear “取消任务” action and explain its state until the cancellation request is confirmed. Do not pretend the remote task has stopped immediately after a tap.
 
-状态包括：待确认、提交中、已批准、已拒绝、已过期、提交失败。提交中防止重复触发；失败后保留内容与错误说明。已批准仅表示授权成功，必须等待真实执行结果才能显示“已发送”或“已支付”。
+### 6.6 Actions that need confirmation
 
-卡片中的角色最多是一个小头像，不能用撒娇、失落等表情诱导批准。过期卡片不可继续操作。审批结果同步到对话与任务页，重复到达的结果不重复弹窗。
+Use a stable, clear card or sheet. State what will happen, the object and scope, and any necessary consequences. For example, show recipient and message body when sending a message, or merchant, items, total, and currency when paying.
 
-### 6.7 Generative UI 卡片
+Use specific button verbs such as “批准发送”, “确认预订”, and “拒绝”; avoid generic “好的” or “继续”. Show an appropriate warning for irreversible or high-risk actions. Call biometric verification only according to the server’s `requireBiometric` value.
 
-沿用项目现有类型化组件目录。各组件共享标题、内容、元信息、操作区的节奏，但根据内容采用不同布局：
+States include pending confirmation, submitting, approved, denied, expired, and submission failed. Prevent repeated taps while submitting and retain the content and error explanation after failure. Approval only means authorization succeeded; wait for the actual result before showing “已发送” or “已支付”.
 
-- 任务进度：步骤摘要与查看详情入口。
-- 文档 / 文本：可扫读的标题、摘要与打开操作。
-- 日程：日期、时间、地点与事件列表，不伪装成已经写入日历。
-- 对比：突出差异，允许查看完整内容；窄屏用纵向项目，避免整页横向溢出。
-- 图片：统一比例的缩略图和点击查看，不拉伸原图。
-- 选择 / 表单：明确单选、多选与必填项，提交后保留用户选择。
-- 订单 / 票务 / 预订：金额、时间、对象与状态突出；草稿、待确认、已确认必须有明显区别。
+Use at most a small avatar on an approval card. Do not use pleading or sad expressions to influence approval. Expired cards cannot be acted on. Sync approval results to Chat and Tasks; duplicate results must not open duplicate dialogs.
 
-卡片原位更新，不因同一结果的状态变化不断新增副本。卡片更新失败时保留最后一次有效内容，说明尚未同步。
+### 6.7 Generative UI cards
 
-### 6.8 设置与记忆
+Reuse the project’s existing typed component directory. Components share a rhythm for title, content, metadata, and actions, but choose layouts appropriate to their content:
 
-顶部使用一个 64–80 pt 的角色头像与 Orbit 名称。之后使用原生分组列表：
+- Task progress: step summary and an entry to view details.
+- Document / text: scannable title, summary, and open action.
+- Calendar: date, time, location, and event list; do not imply that anything has already been written to the calendar.
+- Comparison: emphasize differences and allow full content to be viewed. Use vertical items on narrow screens; avoid horizontal overflow across the page.
+- Images: consistent-ratio thumbnails that open on tap; do not stretch the source image.
+- Choice / form: make single-select, multi-select, and required fields clear; keep the user’s selections after submission.
+- Orders / tickets / bookings: emphasize amount, time, object, and status; clearly distinguish draft, awaiting confirmation, and confirmed.
 
-1. 我的 Orbit：名字、如何称呼用户、性格描述。
-2. 连接与设备：Mac 名称、连接状态、已配对设备、重新连接。
-3. 记忆：查看、新增、删除；区分用户明确告知和智能体推断。
-4. 主动与通知：主动程度、安静时段、通知预算。
-5. 权限与隐私：审批模式、完全访问、设备上下文授权。
-6. 高级设置：模型等技术配置，按需进入。
+Update a card in place when its state changes instead of creating repeated copies of the same result. If a card update fails, preserve the last valid content and say it has not synced.
 
-普通用户首先看到“它会怎样帮我”和“我能控制什么”。Host ID、Relay 地址、模型标识等放到连接详情或高级设置中。权限设置描述具体影响，不能用含糊的“更聪明模式”代替完全访问说明。
+### 6.8 Settings and memory
 
-保存设置时显示保存中、成功或失败；同步失败不要让控件呈现“已经保存”的假象。删除记忆提供适合现有接口的恢复或确认策略，不能展示无后端支持的“撤销”。
+Use a 64–80 pt character avatar and Orbit’s name at the top, followed by native grouped lists:
 
-### 6.9 Live Activity 与灵动岛
+1. My Orbit: name, how to address the user, personality description.
+2. Connection and devices: Mac name, connection status, paired devices, reconnect.
+3. Memory: view, add, delete; distinguish what the user explicitly said from agent inference.
+4. Proactivity and notifications: proactivity level, quiet hours, notification budget.
+5. Permissions and privacy: approval mode, full access, device-context permissions.
+6. Advanced settings: model and other technical configuration as needed.
 
-展示任务名称、当前步骤、状态和必要操作入口。小空间使用简化的角色头部 / 星环标识，大空间再放小型角色；需要在实际系统容器与裁切条件下检查。
+First show ordinary users “how it helps me” and “what I control”. Put Host ID, Relay address, model identifier, and similar details under connection details or advanced settings. Describe the concrete impact of permissions; do not replace a full-access explanation with vague wording such as “smarter mode”.
 
-多个并行任务时选择最需要关注的一项，并允许进入 App 查看全部。需要确认时使用文字与状态符号引导进入 App，不能只让小卫星变色。
+Show saving, saved, or failed when a setting is saved. On sync failure, do not make a control look saved. For memory deletion, use a recovery or confirmation strategy supported by the existing interface; do not show an unsupported “Undo”.
 
-以系统允许的刷新与展示机制为准。静态素材必须也能解释状态；不把持续 3D 动画作为锁屏或灵动岛方案的依赖。
+### 6.9 Live Activity and Dynamic Island
 
-## 7. 吉祥物使用与素材需求
+Show task name, current step, status, and necessary action entry. In a compact area, use a simplified character header / ring mark; show a small character only in a larger area. Check clipping inside actual system containers.
 
-### 7.1 推荐使用尺度
+When multiple tasks run in parallel, choose the one needing the most attention and provide an entry to the App for all tasks. When confirmation is needed, use text and a status symbol to direct the user into the App; do not rely only on changing the satellite’s color.
 
-- 引导：150–190 pt，可展示完整形象。
-- 对话空状态：112–144 pt，键盘出现后退场。
-- 任务空状态：80–100 pt。
-- 设置头部：64–80 pt。
-- 对话头像：28–32 pt，使用简化头像，保证眼睛可见。
-- 紧凑状态：16–24 pt，使用简化星环 / 小卫星符号，不缩小整张 3D 图。
+Follow system refresh and display rules. Static assets must communicate state too; do not make continuous 3D animation a dependency for the Lock Screen or Dynamic Island.
 
-同屏通常只有一个主要角色。吉祥物不挡正文、不盖住操作、不作为未经说明的隐藏按钮。
+## 7. Mascot use and asset requirements
 
-### 7.2 状态与表情
+### 7.1 Recommended scale
 
-- 待机：平静微笑，静态为主；进入页面可有一次轻微迎接动作。
-- 思考：略微歪头，星环低调转动，不制造百分比。
-- 执行：专注眼神，小卫星表达活动，配真实步骤文字。
-- 等待用户：抬头注视，保持静态，配明确问题或待确认事项。
-- 完成：举起小手，单次短反馈，随后恢复平静。
-- 失败 / 受阻：轻微困惑，保持友善；文案解释实际原因和下一步。
-- Mac 离线：安静状态，必须另有“Mac 暂时离线”文字；不能只闭眼暗示休息。
+- Onboarding: 150–190 pt; full character may be shown.
+- Chat empty state: 112–144 pt; hide it when the keyboard appears.
+- Task empty state: 80–100 pt.
+- Settings header: 64–80 pt.
+- Chat avatar: 28–32 pt; use a simplified avatar that keeps the eyes visible.
+- Compact status: 16–24 pt; use a simplified ring / satellite symbol, not a scaled-down full 3D image.
 
-表情是辅助信息。用户正在长时间阅读时，不持续晃动角色或让它看向手指。
+Usually show only one primary character at a time. The mascot must not cover body text or controls, and must not act as an unexplained hidden button.
 
-### 7.3 待制作资产清单
+### 7.2 States and expressions
 
-当前只有设定图，**没有可直接上线的透明角色切图或动画文件**。下面文件名是资产交付建议，不表示文件已存在：
+- Idle: calm smile, mostly static; one slight greeting motion when entering a page is allowed.
+- Thinking: slightly tilted head and a restrained rotating ring; do not imply a percentage.
+- Working: focused eyes; satellite indicates activity alongside truthful step text.
+- Waiting for the user: look up and remain still, with a clear question or item needing confirmation.
+- Complete: raise a small hand for one brief response, then return to calm.
+- Failed / blocked: slight confusion but remain friendly; copy explains the actual reason and next step.
+- Mac offline: calm pose plus explicit “Mac 暂时离线” text; do not imply rest only by closing the eyes.
 
-- `orbit-idle.png`：标准三分之四角度。
-- `orbit-wave.png`：欢迎挥手。
-- `orbit-thinking.png`：思考。
-- `orbit-working.png`：专注执行。
-- `orbit-waiting.png`：等待回应。
-- `orbit-success.png`：完成。
-- `orbit-trouble.png`：受阻。
-- `orbit-avatar.png`：头像专用构图。
-- `orbit-mark.svg` 或原生矢量：小尺寸星环标识。
-- `orbit-app-icon.png`：无文字的独立图标源文件。
+Expressions are supporting information. Do not keep shaking the character or making it look toward the user’s finger while the user is reading for a long time.
 
-角色素材建议透明背景、sRGB、统一视角与光照、同画布比例与视觉重心，并留足星环和挥手边缘安全区；例如以 1024 × 1024 为角色源画布，按平台要求导出派生尺寸。App 图标使用独立、完整不透明背景版本，按目标平台规范处理。
+### 7.3 Assets still to be produced
 
-不能把整张设定图放进头像，也不能将粗裁白底图视为已交付的透明素材。缺素材时先使用项目现有标识并标明替换点；若制作临时占位，必须与最终资产明确区分。
+Only the concept image exists. **There are no transparent character cutouts or animation files ready for release.** The following filenames are asset-delivery suggestions and do not imply that the files already exist:
 
-## 8. 动效与触感
+- `orbit-idle.png`: standard three-quarter view.
+- `orbit-wave.png`: welcome wave.
+- `orbit-thinking.png`: thinking.
+- `orbit-working.png`: focused work.
+- `orbit-waiting.png`: waiting for a response.
+- `orbit-success.png`: complete.
+- `orbit-trouble.png`: blocked.
+- `orbit-avatar.png`: avatar composition.
+- `orbit-mark.svg` or native vector: small ring mark.
+- `orbit-app-icon.png`: standalone icon source without text.
 
-动效的任务是解释响应、空间关系和状态变化。默认控件不过冲；只有手势释放或角色单次表达可以带少量弹性。
+Use transparent backgrounds, sRGB, consistent view and lighting, the same canvas ratio and visual center, with safe margins around the ring and waving arms. For example, use a 1024 × 1024 source canvas for character art, then export derivative sizes for each platform requirement. Make the App icon a separate, fully opaque background asset that follows the target platform’s specifications.
 
-- 按下立即反馈，缩放约 0.97；释放恢复，可采用约 0.15–0.18 s 的快速响应。
-- 小状态切换约 0.2–0.26 s；卡片展开、Sheet 与布局变化约 0.3–0.4 s，优先复用项目现有 Motion。
-- Sheet 跟随手势，可中断、可反向拖动；不等一段动画结束才允许操作。
-- 完成时小卫星短亮一次即可，不使用全屏撒花。长任务结束不强制抢走用户正在看的内容。
-- 流式文字以可读为先，不对每个字符重复淡入。
-- 除必要进度反馈外，不默认运行永久循环的漂浮、呼吸和星环旋转；离屏、后台和低电量时停止装饰动画。
-- 触觉用于提交、关键状态或错误，避免每条 token、每个步骤都震动。
-- Reduce Motion 下移除旋转、位移、弹跳，使用静态状态与约 0.15 s 淡变；减少透明度时提供实色层。
+Do not use the full concept image as an avatar or treat a roughly cropped white-background image as a delivered transparent asset. If assets are missing, use the project’s existing mark and label the replacement point. If making a temporary placeholder, clearly distinguish it from final art.
 
-## 9. 真实状态与恢复体验
+## 8. Motion and haptics
 
-### 9.1 与现有协议的对应
+Motion should explain response, spatial relationships, and state changes. Controls should not overshoot by default; use a little spring only when a gesture ends or the character makes a single expression.
 
-以 `docs/protocol.md` 和实际类型为准。设计层可以改显示文案，不能私自扩展协议枚举。
+- Give immediate press feedback with scale around 0.97; restore on release with a quick response around 0.15–0.18s.
+- Small state changes take about 0.2–0.26s; card expansion, sheets, and layout changes take about 0.3–0.4s, preferably reusing existing Motion.
+- Sheets follow gestures and can be interrupted or dragged back; do not block input until an animation finishes.
+- On completion, briefly light the small satellite once; do not use full-screen confetti. A long task must not take over content the user is reading.
+- Prioritize readable streaming text; do not fade in every character separately.
+- Do not run permanent floating, breathing, or ring rotation by default except for necessary progress feedback. Stop decorative motion off-screen, in the background, or on low battery.
+- Use haptics for submission, important status, or errors; avoid vibration for every token or step.
+- Under Reduce Motion, remove rotation, translation, and bounce; use static states and about a 0.15s fade. Under Reduce Transparency, provide solid surfaces.
 
-- `butler.status`：`idle` → 待机，`thinking` → 思考，`acting` → 执行，`waiting` → 等待。
-- Task：`planning` → 规划中，`running` → 进行中，`waiting_user` → 等你补充，`blocked` → 遇到阻碍，`done` → 已完成，`failed` → 未完成，`cancelled` → 已取消。
-- Step：`pending / running / done / failed / skipped` 对应待开始 / 进行中 / 完成 / 失败 / 跳过。
-- Session 的 `waiting_approval` 与具体 Approval 联动；任务的等待不一定都代表审批，也可能是澄清问题。
+## 9. Real states and recovery experience
 
-不要把“正在思考”“等待审批”“连接中”和“Mac 离线”统一画成一个无限转圈。连接状态、智能体状态和任务状态分别来自各自的数据源。Mac 断线不表示远端任务已经停止，也不能直接把进行中任务改为失败。
+### 9.1 Mapping to the existing protocol
 
-### 9.2 必须覆盖的异常场景
+Use `docs/protocol.md` and the actual types as the source of truth. The design layer may change display copy but must not expand protocol enums on its own.
 
-- 首次加载：保留页面结构，内容区局部加载，避免全屏空白。
-- Mac 离线：说明当前不能执行；如消息确已进入现有待发送队列，显示“待发送”，否则保留草稿并解释。
-- 重新连接：显示恢复中和最后更新时间；恢复后以服务端状态同步，不重复创建任务或发送审批。
-- 发送失败：保留消息 / 草稿，提供明确重试；区分已排队、服务端已收到和真正执行完成。
-- 任务受阻：展示原因及需要用户做的事；不能捏造自动恢复时间。
-- 审批失效：禁用旧按钮，解释失效，必要时回到任务查看最新请求。
-- 内容为空、结果很长、图片加载失败、附件不支持：均有可理解的替代内容。
+- `butler.status`: idle → idle, thinking → thinking, acting → acting, waiting → waiting.
+- Task: planning → planning, running → in progress, `waiting_user` → needs more input, blocked → blocked, done → completed, failed → incomplete, cancelled → cancelled.
+- Step: pending / running / done / failed / skipped map to not started / in progress / complete / failed / skipped.
+- Session `waiting_approval` links to a specific Approval. A task waiting does not always mean approval; it may also be a clarification question.
 
-## 10. 无障碍与适配要求
+Do not depict “thinking”, “waiting for approval”, “connecting”, and “Mac offline” as one endless spinner. Connection state, agent state, and task state come from separate sources. A Mac disconnect does not mean the remote task has stopped, and does not allow an in-progress task to be changed directly to failed.
 
-- 普通文字目标对比度至少 4.5:1，大字及必要控件 / 状态边界按对应标准验证；本文色值尚未经过实际组合的完整审计。
-- VoiceOver 能读到按钮含义、连接状态、任务状态与进度。纯装饰角色隐藏于辅助功能树；角色若承担状态，则由容器提供状态说明。
-- 大字号下卡片增高、按钮纵向排列、标签换行；不能截断审批对象、费用或关键操作文字。
-- 状态不单靠颜色；需要同时有文字或符号。支持提高对比度、减少动态效果、减少透明度。
-- 在小屏 iPhone、常规屏、大屏及横屏检查安全区和键盘遮挡；iPad 至少保证内容宽度合理、主要流程可用。
-- Markdown、文件名、长链接和混合中英文内容不撑破布局。横向滚动仅出现在确有需要的局部组件内。
+### 9.2 Required exception cases
 
-## 11. 与现有项目的实施衔接
+- Initial load: keep the page structure and load content locally; avoid a full-screen blank.
+- Mac offline: say that work cannot run right now. If the message has entered the existing send queue, show “待发送”; otherwise retain the draft and explain.
+- Reconnection: show recovery and last-updated time. After reconnecting, sync from server state without creating a duplicate task or sending duplicate approval.
+- Send failure: retain message / draft and provide a clear retry. Distinguish queued, received by server, and actually completed.
+- Blocked task: show the reason and what the user needs to do; do not invent an automatic recovery time.
+- Expired approval: disable old buttons and explain. If needed, return to the task to view the latest request.
+- Empty content, very long results, image load failure, and unsupported attachments all need understandable fallback content.
 
-设计与落地前先阅读项目规则、交接文件（若存在 `AGENT.md` 则完整阅读），并检查工作区已有修改。以下路径已存在，可作为入口：
+## 10. Accessibility and adaptation
 
-- `ios/OPA/App/OPAApp.swift`：应用入口、RootView、三个 Tab。
-- `ios/OPA/Design/Theme.swift`：颜色引用、Space、Radius、Motion、字体及共用组件。
-- `ios/OPA/Resources/Assets.xcassets/`：App 语义颜色和图标资产。
-- `ios/OPAWidgets/Assets.xcassets/`：Widget 颜色资产，需要同步设计语义。
-- `ios/OPA/Features/Pairing/PairingView.swift`：连接与配对。
-- `ios/OPA/Features/Chat/ChatView.swift`、`ComposerView.swift`、`AttachmentTray.swift`：对话与输入。
-- `ios/OPA/Features/Tasks/TasksView.swift`：任务与执行详情入口。
-- `ios/OPA/Features/GenUI/`：交互卡片。
-- `ios/OPA/Features/Settings/SettingsView.swift`：设置、记忆与设备页面。
-- `ios/OPA/Core/Store/AppModel.swift`：状态与动作接口。
-- `ios/OPAWidgets/OPAWidgets.swift`：Live Activity 与灵动岛。
-- `docs/protocol.md`：消息、任务、审批、卡片 schema。
+- Ordinary text contrast must be at least 4.5:1. Validate large text and necessary control / status boundaries against their applicable standards. These colors have not yet had a complete audit in all actual combinations.
+- VoiceOver must announce button meaning, connection status, task status, and progress. Hide purely decorative characters from the accessibility tree; if a character communicates state, its container supplies the state description.
+- At large text sizes, cards grow, buttons stack vertically, and labels wrap. Never truncate approval objects, fees, or important action text.
+- Do not communicate status by color alone; also provide text or symbols. Support increased contrast, reduced motion, and reduced transparency.
+- Check safe areas and keyboard overlap on small, regular, and large iPhones and in landscape. On iPad, at minimum keep content width reasonable and the main flow usable.
+- Markdown, filenames, long links, and mixed Chinese/English content must not break the layout. Horizontal scrolling is limited to components that genuinely need it.
 
-当前已有偏靛蓝的主题与行星标识，本文件提出迁移到暖白 / 杏橙角色体系。迁移时优先保留既有语义 token 名称和调用位置；可新增 `brandApricot / accentText / onPrimary` 等角色，但要统一映射。
+## 11. Implementation with the existing project
 
-特别检查旧组件对白色前景的硬编码：不能只把原来的深色 AccentFill 换成浅橙色而不调整文字。不要为了视觉换肤修改加密、连接、任务协议、审批语义或持久化逻辑。
+Before design work or implementation, read project rules and handoff records (read `AGENT.md` completely if present), and inspect existing workspace changes. These existing paths are useful entry points:
 
-模型设置、连接方式和工具执行细节在适合的设置 / 详情层级中保留，不因美化删掉已有功能。
+- `ios/OPA/App/OPAApp.swift`: app entry, RootView, three tabs.
+- `ios/OPA/Design/Theme.swift`: color references, Space, Radius, Motion, fonts, and shared components.
+- `ios/OPA/Resources/Assets.xcassets/`: App semantic colors and icon assets.
+- `ios/OPAWidgets/Assets.xcassets/`: Widget color assets; keep design semantics in sync.
+- `ios/OPA/Features/Pairing/PairingView.swift`: connection and pairing.
+- `ios/OPA/Features/Chat/ChatView.swift`, `ComposerView.swift`, `AttachmentTray.swift`: chat and composer.
+- `ios/OPA/Features/Tasks/TasksView.swift`: task list and execution details entry.
+- `ios/OPA/Features/GenUI/`: interactive cards.
+- `ios/OPA/Features/Settings/SettingsView.swift`: settings, memory, and device pages.
+- `ios/OPA/Core/Store/AppModel.swift`: state and action interfaces.
+- `ios/OPAWidgets/OPAWidgets.swift`: Live Activity and Dynamic Island.
+- `docs/protocol.md`: message, task, approval, and card schemas.
 
-## 12. Claude 的交付要求与验收
+The existing theme uses indigo and a planet mark; this document proposes moving to a warm white / apricot character system. During migration, first preserve existing semantic token names and call sites; new roles such as brandApricot / `accentText` / onPrimary may be added, but map them consistently.
 
-建议按以下顺序推进：
+Pay special attention to hard-coded white foreground colors in old components. Do not replace the old dark AccentFill with light orange without also adjusting its text. Do not change encryption, connection behavior, task protocol, approval semantics, or persistence to reskin the UI.
 
-1. 阅读项目与形象图，确认现有功能和本文件建议的差异。
-2. 先提交对话空状态、运行中的对话、任务列表与确认操作四个关键画面，锁定视觉方向。
-3. 扩展配对、任务详情、设置、记忆、深色模式和异常状态。
-4. 若获准实现，再统一 token 与共用组件，逐页落地；不以替换整个项目作为默认做法。
-5. 使用实际构建、预览或运行环境验证，记录已运行和未运行的检查。
+Keep model settings, connection methods, and tool execution details in suitable settings / detail levels; do not remove existing capabilities for visual polish.
 
-设计交付至少包含：
+## 12. Claude delivery requirements and acceptance
 
-- 关键页面高保真图或可预览界面，以及浅 / 深色对照。
-- 页面结构、用户动作、状态变化和回退路径。
-- token、组件和素材说明；现有素材、待制作素材分别列明。
-- 明确的实现范围、文件变更与功能缺口。
-- 小屏、键盘展开、大字号、离线、失败及审批状态的验证结果。
+Suggested order:
 
-验收清单：
+1. Read the project and character image; identify existing capabilities and differences from this document.
+2. First deliver the four key screens: chat empty state, active chat, task list, and confirmation action. Lock the visual direction.
+3. Extend pairing, task details, settings, memory, dark mode, and exceptional states.
+4. If implementation is authorized, unify tokens and shared components, then implement page by page; do not default to replacing the whole project.
+5. Verify with a real build, preview, or runtime environment, and record checks that were and were not run.
 
-- [ ] 不看名称也能从颜色和角色认出 Orbit。
-- [ ] 三个底部入口清晰；默认打开即可发送需求。
-- [ ] 角色与参考图一致，正文和关键操作优先可读。
-- [ ] 用户能知道当前是否连接、任务在做什么、是否需要自己参与。
-- [ ] 发送、停止回复、取消任务三个语义不混淆。
-- [ ] 审批对象、实际后果、授权结果与执行结果清楚区分。
-- [ ] 没有假进度、假素材、无效按钮或误导性的已完成状态。
-- [ ] 浅橙色未造成白字低对比，深色模式无白底素材块。
-- [ ] 大字号、VoiceOver、减少动态效果下主要路径仍完整。
-- [ ] 保留已有功能、状态接口与用户未提交修改。
+Design delivery must include at least:
 
-## 13. 可直接复制给 Claude 的执行提示
+- High-fidelity designs or previewable UI for key screens, with light / dark comparison.
+- Page structure, user actions, state changes, and recovery paths.
+- Token, component, and asset documentation; list existing and planned assets separately.
+- Clear implementation scope, file changes, and capability gaps.
+- Verification results for small screens, open keyboard, large text, offline, failure, and approval states.
 
-```text
-请根据 docs/design/orbit-app-design.md，为当前 Orbit 个人智能体设计 iPhone App。
-同时读取 docs/design/orbit-mascot-concept-v1.png，角色必须以该设定图为准。
+Acceptance checklist:
 
-Orbit 是通过手机交互、在用户 Mac 上执行任务的私人智能体。保留项目既有的
-对话 / 任务 / 设置导航，以及配对、审批、生成式卡片、记忆和 Live Activity 能力。
+- [ ] Orbit is recognizable from its colors and character even without reading the name.
+- [ ] The three bottom destinations are clear; the default screen is ready to send a request.
+- [ ] The character matches the reference, while body text and important actions remain easy to read.
+- [ ] The user can tell whether they are connected, what the task is doing, and whether they need to participate.
+- [ ] Sending, stopping a reply, and cancelling a task have distinct meanings.
+- [ ] Approval object, real-world consequence, authorization result, and execution result are clearly distinguished.
+- [ ] No fake progress, fake assets, inactive controls, or misleading completed state.
+- [ ] Light orange does not cause low-contrast white text; dark mode has no white-backed asset blocks.
+- [ ] Main paths work with large text, VoiceOver, and reduced motion.
+- [ ] Existing capabilities, state interfaces, and uncommitted user changes are preserved.
 
-视觉方向：奶白、杏橙、深棕；柔软可爱的 3D 小星灵搭配清晰克制的原生 UI。
-角色保留小翘角、豆豆眼、小鳍状手、斜绕身体的杏橙细星环和单颗小卫星。
-角色用于欢迎、空状态和关键反馈，内容页使用小头像。不要把所有控件做成 3D。
+## 13. Prompt to copy directly to Claude
 
-先阅读项目规则、交接文件和现有实现，检查已有修改。先完成四个关键画面的
-具体方案：对话空状态、执行中的对话、任务列表、需要确认的操作。
-提供组件、token、真实状态和深色方案，再扩展其余页面。
-本次首先交付设计；仅在我明确要求实现时修改 App 代码。
+    Please design the iPhone App for the Orbit personal agent according to docs/design/orbit-app-design.md.
+    Also read docs/design/orbit-mascot-concept-v1.png; the character must follow that concept image.
 
-不要添加无接口支持的语音、暂停、下载或养成功能；不要编造进度和成功结果。
-设计建议与已经存在的能力需要明确区分。当前角色只有设定图，没有透明切图
-和动画资产，请标记素材缺口，不要把整张设定图用作头像或 App 图标。
+    Orbit is a personal agent that interacts through a phone and performs tasks on the user’s Mac. Keep
+    the project’s existing Chat / Tasks / Settings navigation and its pairing, approvals, generative cards,
+    memory, and Live Activity capabilities.
 
-遵守本文的可访问性、键盘、小屏、离线恢复与审批要求。若实施，复用现有
-SwiftUI 结构和语义 token；不要改动后端协议、加密、权限逻辑或其他人的修改。
-交付清晰可审阅的结果，并说明真实运行过的验证和仍待完成的事项。
-```
+    Visual direction: cream, apricot, and dark brown; a soft, cute 3D little star spirit paired with a clear,
+    restrained native UI. Keep the small tuft, dot eyes, little fin-like hands, thin slanted apricot ring
+    around the body, and single small satellite. Use the character for welcome, empty states, and key
+    feedback; use a small avatar on content pages. Do not turn every control into 3D.
+
+    First read project rules, handoff records, and the existing implementation, and inspect existing
+    changes. Start with concrete designs for four key screens: chat empty state, active chat, task list,
+    and action needing confirmation. Include components, tokens, real states, and dark-mode design,
+    then extend to the other pages.
+    Deliver design first; modify App code only if I explicitly ask for implementation.
+
+    Do not add voice, pause, download, or character-growth features without supporting interfaces. Do not
+    invent progress or success results. Clearly distinguish design proposals from capabilities that already
+    exist. The character currently has only a concept image, with no transparent cutouts or animation
+    assets; mark this asset gap and do not use the full concept image as an avatar or App icon.
+
+    Follow the accessibility, keyboard, small-screen, offline-recovery, and approval requirements in this
+    document. If implementing, reuse existing SwiftUI structures and semantic tokens; do not change the
+    backend protocol, encryption, permission logic, or another agent’s changes.
+    Deliver a reviewable result and report checks actually run and remaining work.

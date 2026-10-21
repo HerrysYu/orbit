@@ -3,6 +3,8 @@ name: codex-orchestration
 description: 把工作派给 Codex session 时加载。规定任务单、模型、权限、复用、打断、验收和监控；优先选择当前可用且有权限的服务 MCP / 插件，电脑或手机 UI 仅在接口和可行网页无法覆盖时使用。
 ---
 
+[English](SKILL.en.md) | **简体中文**
+
 # codex-orchestration：派发与管理 Codex session
 
 ## 1. 先判断要不要开 session
