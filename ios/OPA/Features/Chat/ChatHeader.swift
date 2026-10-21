@@ -35,6 +35,7 @@ struct ChatHeader: View {
 
     var showsPresence: Bool
     var hero: Namespace.ID
+    var onClearChat: () -> Void
 
     /// Height of the fade below the content.
     private static let fadeHeight: CGFloat = 24
@@ -53,6 +54,19 @@ struct ChatHeader: View {
             Spacer(minLength: 0)
             if model.isDemo { DemoTag() }
             ConnectionIndicator(state: connection) { model.showConnection = true }
+            Menu {
+                Button(role: .destructive, action: onClearChat) {
+                    Label("清除聊天记录", systemImage: "trash")
+                }
+                .disabled(model.isClearingChat)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.inkSecondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("更多聊天操作")
         }
         .frame(minHeight: presenceHeight, alignment: .center)
         .padding(.leading, 20)

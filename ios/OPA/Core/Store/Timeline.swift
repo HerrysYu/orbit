@@ -126,6 +126,14 @@ struct TimelineStore: Sendable {
         items = []; keys = []; keyById = [:]
     }
 
+    /// Removes durable and provisional items at or before a host barrier, preserving anything ordered after it.
+    mutating func remove(through order: Double) {
+        let kept = zip(items, keys).filter { $0.1 > order }
+        items = kept.map { $0.0 }
+        keys = kept.map { $0.1 }
+        keyById = Dictionary(uniqueKeysWithValues: zip(items.map(\.id), keys))
+    }
+
     // MARK: Search
 
     private func index(of id: String) -> Int? {

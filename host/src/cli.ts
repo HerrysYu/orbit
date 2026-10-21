@@ -4,6 +4,7 @@
 //   opa chat                  talk to the butler from the terminal (for testing without the phone)
 //   opa status | devices | unpair <deviceId>
 //   opa phone setup | status
+//   opa mcp list | status | init | enable <id> | disable <id> | import <json-path> | check <id...>
 //   opa config relay <wss://…> | port <n> | bundle-id <id> | phone-notify on|off
 //   opa install-skills        link skills/china-services and phone-automation into ~/.codex/skills
 import { createInterface } from 'node:readline/promises';
@@ -16,7 +17,8 @@ import qrcode from 'qrcode-terminal';
 import { DEFAULT_PHONE_SERIAL, PHONE_DIR, phoneConfigStatus } from './phone/config.ts';
 import { controlClient } from './control.ts';
 import { Db } from './store/db.ts';
-import { SKILLS_DIR } from './codex/bridge.ts';
+import { CodexBridge, SKILLS_DIR } from './codex/bridge.ts';
+import { importMcpServices, initializeMcpConfig, listMcpServices, setMcpServiceEnabled } from './mcp/registry.ts';
 
 const [cmd, ...args] = process.argv.slice(2);
 
@@ -48,6 +50,7 @@ async function main() {
     }
     case 'config': return config();
     case 'phone': return phone();
+    case 'mcp': return mcp();
     case 'install-skills': {
       const dest = join(homedir(), '.codex/skills');
       mkdirSync(dest, { recursive: true });
@@ -71,6 +74,125 @@ async function phone() {
   if (subcommand === 'status') return phoneStatus();
   console.error('用法：opa phone setup | status');
   process.exitCode = 2;
+}
+
+async function mcp() {
+  const [subcommand, ...argv] = args;
+  try {
+    if (subcommand === 'list' || subcommand === 'status') {
+      console.log(JSON.stringify(safeMcpCatalog(), null, 2));
+      return;
+    }
+    if (subcommand === 'init') {
+      const result = initializeMcpConfig();
+      console.log(JSON.stringify({ created: result.created, configPath: result.configPath, envPath: result.envPath }, null, 2));
+      return;
+    }
+    if (subcommand === 'enable' || subcommand === 'disable') {
+      if (argv.length !== 1 || !knownMcpId(argv[0])) {
+        console.error('用法：opa mcp ' + subcommand + ' <已知服务 ID>');
+        process.exitCode = 2;
+        return;
+      }
+      setMcpServiceEnabled(argv[0], subcommand === 'enable');
+      console.log(JSON.stringify({ id: argv[0], enabled: subcommand === 'enable' }));
+      return;
+    }
+    if (subcommand === 'import') {
+      if (argv.length !== 1) {
+        console.error('用法：opa mcp import <json-path>');
+        process.exitCode = 2;
+        return;
+      }
+      const imported = importMcpServices(argv[0]);
+      console.log(JSON.stringify({ imported }));
+      return;
+    }
+    if (subcommand === 'check') {
+      const ids = argv;
+      if (ids.length < 1 || ids.length > 8 || ids.some((id) => !knownMcpId(id))) {
+        console.error('用法：opa mcp check <已知服务 ID...>（至少 1 个，最多 8 个）');
+        process.exitCode = 2;
+        return;
+      }
+      return mcpCheck(ids);
+    }
+    console.error('用法：opa mcp list | status | init | enable <id> | disable <id> | import <json-path> | check <id...>');
+    process.exitCode = 2;
+  } catch {
+    console.error('MCP 操作失败；请检查命令、配置文件和文件权限。');
+    process.exitCode = 1;
+  }
+}
+
+function knownMcpId(id: string | undefined): boolean {
+  return typeof id === 'string' && listMcpServices().some((item) => item.id === id);
+}
+
+function safeMcpText(value: unknown, max = 500): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) || undefined;
+}
+
+function safeMcpCatalog() {
+  return listMcpServices().map((item) => ({
+    id: safeMcpText(item.id, 64) ?? '',
+    name: safeMcpText(item.name, 120) ?? '',
+    region: item.region === 'china' ? 'china' : 'global',
+    description: safeMcpText(item.description, 500) ?? '',
+    sourceUrl: safeMcpText(item.sourceUrl, 1000) ?? '',
+    setup: safeMcpText(item.setup, 1000) ?? '',
+    enabled: Boolean(item.enabled),
+    configured: Boolean(item.configured),
+    missingEnv: Array.isArray(item.missingEnv) ? item.missingEnv.map((name) => safeMcpText(name, 80)).filter(Boolean) : [],
+    reason: safeMcpText(item.reason, 240),
+    builtin: Boolean(item.builtin),
+  }));
+}
+
+function safeCheckError(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value) return undefined;
+  if (/timeout|timed out/i.test(value)) return '连接超时';
+  if (/auth|unauthor|credential|login|登录|授权/i.test(value)) return '需要登录或授权';
+  if (/missing|not configured|未配置|缺少/i.test(value)) return '本地配置不完整';
+  if (/connect|refused|unreachable|网络/i.test(value)) return '服务连接失败';
+  return '服务检查失败';
+}
+
+async function mcpCheck(ids: string[]) {
+  const bridge = new CodexBridge();
+  let exitCode = 0;
+  let childExited = false;
+  let resolveExit!: () => void;
+  const exited = new Promise<void>((resolveExited) => { resolveExit = resolveExited; });
+  bridge.rpc.on('exit', () => { childExited = true; resolveExit(); });
+  try {
+    await bridge.start();
+    const results = await bridge.checkMcpServices(ids);
+    const safe = results.map((result) => {
+      const row: { id: string; server: string; connected: boolean; toolCount: number; auth: string; error?: string } = {
+        id: knownMcpId(result.id) ? result.id : 'unknown',
+        server: /^[a-zA-Z0-9_.:-]{1,120}$/.test(result.server) ? result.server : 'unknown',
+        connected: Boolean(result.connected),
+        toolCount: Number.isFinite(result.toolCount) ? Math.max(0, Math.min(10_000, Math.trunc(result.toolCount))) : 0,
+        auth: typeof result.auth === 'string' && /^[a-zA-Z0-9_.:-]{1,80}$/.test(result.auth) ? result.auth : 'unknown',
+      };
+      const error = safeCheckError(result.error);
+      if (error) row.error = error;
+      if (!result.connected) exitCode = 1;
+      return row;
+    });
+    if (safe.length !== ids.length) exitCode = 1;
+    console.log(JSON.stringify(safe, null, 2));
+  } catch {
+    console.error('MCP 检查失败；请确认 Codex CLI 已安装并登录，且所选服务配置可用。');
+    exitCode = 1;
+  } finally {
+    bridge.rpc.stop();
+    if (!childExited) await Promise.race([exited, new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, 5000))]);
+    await new Promise<void>((resolveFlush) => stdout.write('', 'utf8', () => resolveFlush()));
+    process.exit(exitCode);
+  }
 }
 
 function phoneSetup() {

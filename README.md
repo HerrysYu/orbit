@@ -180,6 +180,12 @@ npx tsx src/cli.ts launchd            # 可选：生成登录自启的 LaunchAge
 
 更多选项见 [host/README.md](host/README.md)。
 
+Host 还内置高德、12306、飞书、Playwright、网页读取、Tavily、GitHub 和 Notion 的 MCP 目录，按任务选择加载。用 `opa mcp list` 查看状态、`opa mcp init` 初始化本地配置；需要 Key 的服务另行填写凭据。参见 [服务与 ModelScope 导入说明](docs/mcp-services.md)。
+
+Gmail、Notion、Google Calendar 和 Google Drive 可复用 Codex 已连接的插件；Google Docs 由 Drive 的文档工具提供。管家先核实当前接口与权限，能用服务 MCP / 插件完成的步骤优先走接口，再考虑网页和电脑 / 手机界面。
+
+App 聊天页右上角菜单可「清除聊天记录」，确认后同步清空聊天并重置当前对话；长期记忆、任务和配对信息保留。此功能需要新版 Host 和 App。
+
 ### 4. 安装 iPhone 客户端（自签）
 
 ```bash

@@ -8,14 +8,30 @@ extension AppModel {
         switch m {
         case .ev(let seq, let ts, let k, let d):
             touchOnline()
+            if k == "chat.cleared" {
+                guard seq > 0 else {
+                    showToast("Mac 发来的聊天清除事件缺少有效序号")
+                    return
+                }
+                _ = applyChatClear(seq: seq, ts: ts, payload: d, animated: true)
+                if seq > lastSeq {
+                    lastSeq = seq
+                    localOrderCounter = 0
+                    if !isDemo { defaults.set(Int(seq), forKey: DefaultsKey.lastSeq) }
+                }
+                return
+            }
             if seq > 0 {
                 guard seq > lastSeq else { return }   // already have it
                 lastSeq = seq
                 localOrderCounter = 0                  // local sort keys are relative to the newest seq
                 if !isDemo {
                     defaults.set(Int(seq), forKey: DefaultsKey.lastSeq)
-                    persistence.append(seq: seq, ts: ts, k: k, d: d)
+                    if !(seq <= lastChatClearSeq && Self.isChatHistoryEvent(k)) {
+                        persistence.append(seq: seq, ts: ts, k: k, d: d)
+                    }
                 }
+                if seq <= lastChatClearSeq && Self.isChatHistoryEvent(k) { return }
             }
             apply(k: k, d: d, ts: ts, seq: seq, animated: true)
         case .live(let k, let d):
@@ -54,6 +70,8 @@ extension AppModel {
                     item = .card(c)
                 }
             }
+        case "chat.cleared":
+            _ = applyChatClear(seq: seq, ts: ts, payload: d, animated: live, persist: !isReplaying)
         case "task.upsert":
             if let t = try? d.decode(OPATask.self), !removedTaskIds.contains(t.id) {
                 tasks[t.id] = t
@@ -102,10 +120,11 @@ extension AppModel {
     func applyLive(k: String, d: JSONValue) {
         switch k {
         case "msg.start":
-            guard let id = d["id"]?.string, !timelineStore.contains("a:" + id) else { return }
+            guard let id = d["id"]?.string, !clearedStreamIds.contains(id), !timelineStore.contains("a:" + id) else { return }
             withAnimation(spring) { beginStreaming(id: id, proactive: d["proactive"]?.bool ?? false) }
         case "msg.delta":
             guard let id = d["id"]?.string, let text = d["text"]?.string else { return }
+            guard !clearedStreamIds.contains(id) else { return }
             appendStreamDelta(id: id, text: text)
         case "butler.status":
             withAnimation(spring) {

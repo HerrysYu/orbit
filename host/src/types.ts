@@ -12,7 +12,7 @@ export type SessionStatus = 'running' | 'idle' | 'waiting_approval' | 'error' | 
 export type Permission = 'manual' | 'auto';
 export interface Session {
   id: string; taskId?: string; title: string; model?: string; status: SessionStatus;
-  permission: Permission; lastActivity?: string; createdAt: number; updatedAt: number;
+  permission: Permission; mcpServices?: string[]; lastActivity?: string; createdAt: number; updatedAt: number;
 }
 
 export type Risk = 'low' | 'medium' | 'high';

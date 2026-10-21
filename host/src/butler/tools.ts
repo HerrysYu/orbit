@@ -13,6 +13,7 @@ import { pickEffort, readEffort } from './effort.ts';
 import { COMPONENTS, validatePatch, validateProps } from './genui.ts';
 import { embedCardImages } from './media.ts';
 import { loadSkillIndex, skillBody } from './prompt.ts';
+import { listMcpServices } from '../mcp/registry.ts';
 
 /** What tools need from the runtime. Implemented by Butler. */
 export interface Rt {
@@ -31,6 +32,8 @@ export interface Rt {
   watches: Map<string, { note: string; on: string[] }>;
   syncSession(threadId: string, patch?: Partial<Session>): Session | undefined;
   currentMsgId(): string | undefined;
+  /** Optional conversation-generation fence for writes resumed after asynchronous tool work. */
+  chatGeneration?(): number;
   requestYield(): void;
 }
 
@@ -50,6 +53,7 @@ const B = (description: string) => ({ type: 'boolean', description });
 const A = (items: object, description: string) => ({ type: 'array', items, description });
 
 const SESSION_STATUSES = ['done', 'error', 'waiting_approval', 'running', 'interrupted'];
+const MAX_MCP_SERVICES = 8;
 // Protect the async createSession window: two brain tool calls can otherwise both see an empty session list.
 const phoneTaskStarting = new WeakSet<CodexBridge>();
 const pendingPhoneTaskControllers = new WeakMap<CodexBridge, AbortController>();
@@ -137,6 +141,28 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: 'mcp_list',
+    description: "查看 Orbit 内置 MCP 服务目录与本地配置状态，不连接服务、不验证登录。何时用：每项涉及外部服务的任务在选路前，按相关性检查内置能力；只选与目标步骤有关的服务。注意：configured 只表示本地配置齐备，不代表已连接或账号鉴权就绪；目录不含密钥。",
+    parameters: obj({ query: S('可选：筛选服务名称、ID、说明或配置状态', { maxLength: 120 }) }),
+    async run(a) {
+      if (a.query !== undefined && (typeof a.query !== 'string' || a.query.length > 120)) return '筛选词无效；最多 120 个字符。';
+      const query = typeof a.query === 'string' ? a.query.trim().toLocaleLowerCase() : '';
+      const catalog = listMcpServices().map((item) => ({
+        id: item.id, name: item.name, region: item.region, description: item.description,
+        sourceUrl: item.sourceUrl, setup: item.setup, enabled: item.enabled, configured: item.configured,
+        missingEnv: item.missingEnv, reason: item.reason, builtin: item.builtin,
+      })).filter((item) => !query || [
+        item.id, item.name, item.region, item.description, item.setup, item.reason, ...item.missingEnv,
+        item.enabled ? 'enabled' : 'disabled', item.configured ? 'configured' : 'not configured',
+      ]
+        .some((value) => typeof value === 'string' && value.toLocaleLowerCase().includes(query)));
+      return {
+        catalog,
+        note: '这是离线目录，不会连接服务。configured 仅表示本地配置齐备，不代表登录或鉴权成功；仅将任务需要的信息传给所选服务。',
+      };
+    },
+  },
+  {
     name: 'task_create',
     description: '在任务看板上创建一个 Task（主人在 App「任务」页实时可见）。何时用：任何需要多步、需要开 Codex session、或需要过一段时间才能完成的事。何时不要用：一句话就能答完的问题、一次 connector_call 就能完成的日历或云盘读写。注意：goal 要写清完成标准；steps 先写你能想到的，之后可用 task_update 增补。默认会在对话里渲染一张 task_progress 卡片。',
     parameters: obj({
@@ -212,7 +238,7 @@ export const TOOLS: Tool[] = [
   // ─────────────────────────── Codex ───────────────────────────
   {
     name: 'codex_session_create',
-    description: '新开一个 Codex session 并下达第一条任务单。Codex 是一个完整的 agent：能上网检索、读写文件、写代码、调用 ChatGPT 插件（Google Calendar、Google Drive 等），以及操作浏览器。何时用：需要多步操作、检索整理、跨网站比较、操作软件的任务步骤；日历、云盘需要多步整合时也开 session，任务单里写明「使用 Google Calendar / Google Drive 插件」。何时不要用：一次性的日历、云盘读写（用 connector_call）和事实查询（web_search）；Mac 图形界面用 computer_use_task；手机 App 用 phone_task；微信不能自动操作。注意：prompt 按 codex-orchestration 的任务单模板写（目标/背景/约束/权限/交付格式/遇阻怎么办），只带完成任务必需的主人信息；需要结构化结果时给 output_schema，字段对齐 GenUI 组件。创建后记得 watch。permission=auto 需要设置允许或主人批准（传 approval_id）。',
+    description: "新开 Codex 执行会话并下达任务单。何时用：多步操作、研究整理、跨服务整合，或只在已配置的内置 MCP 中提供的能力；派发前按相关性查 mcp_list / connectors_list，并在任务单点名实际可用的服务工具，内置 MCP 用 mcp_services 明确选择。configured 不代表已连接或有账号权限。能由已连接 connector 单步完成的直接 connector_call；电脑 / 手机界面仅在服务接口和可行网页都无法覆盖时使用。任务单遵循 codex-orchestration 模板、只带必要信息并说明缺权限时的停止方式；支付、对外发送、删除仍按原授权。创建后记得 watch。",
     parameters: obj({
       title: S('session 标题，例如「查日料餐厅」'),
       prompt: S('完整任务单'),
@@ -223,22 +249,25 @@ export const TOOLS: Tool[] = [
       permission: S('manual=沙箱内工作、越界需审批；auto=完全访问不再询问', { enum: ['manual', 'auto'] }),
       approval_id: S('permission=auto 时，主人已批准的 approval id'),
       skills: A({ type: 'string' }, '要挂给 Codex 的 skill，例如 ["china-services"]'),
+      mcp_services: { ...A({ type: 'string', minLength: 1, maxLength: 64 }, '明确选择要注入本 session 的内置 MCP 服务 ID；最多 8 个，只能选已启用且本地配置齐备的服务。省略或空数组表示不注入'), maxItems: MAX_MCP_SERVICES, uniqueItems: true },
       output_schema: { type: 'object', description: '可选：要求最终消息符合的 JSON Schema', additionalProperties: true },
     }, ['title', 'prompt']),
     async run(a, rt) {
+      const mcpServices = validateMcpServiceSelection(a.mcp_services);
       const permission = checkPermission(a.permission, a.approval_id, rt);
       const model = workerModel(rt, a.model);
       const s = await rt.bridge.createSession({
         title: a.title, prompt: a.prompt, model, effort: workerEffort(rt, a.effort, model), permission, skills: a.skills, outputSchema: a.output_schema,
+        mcpServices,
       });
-      rt.syncSession(s.threadId, { taskId: a.task_id, title: a.title });
+      rt.syncSession(s.threadId, { taskId: a.task_id, title: a.title, ...(mcpServices.length ? { mcpServices } : {}) });
       if (a.task_id && a.step_id) rt.state.updateTask(a.task_id, { steps: [{ id: a.step_id, status: 'running', sessionId: s.threadId }] });
       return { session_id: s.threadId, model: s.model, permission, status: s.status };
     },
   },
   {
     name: 'computer_use_task',
-    description: '开一个专门操作这台 Mac 图形界面的 Codex session（computer use：截图、点击、输入）。何时用：需要登录态的网页或只有桌面 App 的服务。何时不要用：手机 App 用 phone_task；微信不能自动操作。中国本土生活服务设 china=true，会自动挂上 china-services skill（有网页端时走浏览器）。注意：同一时间只能有一个 computer use session（共用一块屏幕和鼠标）；涉及付款的一律停在支付页把订单信息交回来，由你给主人推审批卡片。',
+    description: "开一个专门操作这台 Mac 图形界面的 Codex session（截图、点击、输入）。仅当本次确实需要 Mac 界面，且相关 MCP / 插件与可行网页都不能覆盖目标步骤时使用；派发前查过能力并在目标里写明选择 Mac 界面的实际原因。中国本土服务设 china=true，会挂 china-services skill。何时不要用：已连接服务接口可完成、普通公开网页可用浏览器完成，或任务明确需要专用手机（用 phone_task）。同一时间只能有一个 computer use session。涉及付款时停下并交回审批。",
     parameters: obj({
       title: S('标题'),
       goal: S('要完成什么，越具体越好（服务名、关键词、时间、人数、预算、偏好）'),
@@ -251,7 +280,7 @@ export const TOOLS: Tool[] = [
       const busy = rt.state.sessions().find((s) => s.title.startsWith('🖥') && (s.status === 'running' || s.status === 'waiting_approval'));
       if (busy) return `已有 computer use session 在运行（${busy.id}「${busy.title}」）。等它完成（watch）后再开，或先 codex_session_interrupt。`;
       const china = a.china !== false;
-      const prompt = `## 目标\n${a.goal}\n\n## 方式\n使用 computer use 操作这台 Mac 的图形界面完成任务。每一步操作后截图确认状态；同一步最多重试 2 次，仍失败就停止并说明卡在哪里。手机 App 不在此 session 操作，必须改用 phone_task；微信不能自动操作。${china ? '\n这是中国本土服务：严格按 china-services skill 执行；优先使用成熟网页端服务。' : ''}\n\n## 红线\n- 不付款：到支付页立即停止，交回订单信息。\n- 不给任何联系人发消息、不发朋友圈、不加好友、不改设置，除非目标里明确要求。\n- 需要授权手机号、实名信息时停下来说明，不要自行同意。\n\n## 交付\n${a.deliverable ?? '最后一条消息以 ```json 代码块结尾，包含 status（done/blocked/needs_approval）、关键结果字段（价格、时间、状态等）和下一步建议。'}`;
+      const prompt = `## 目标\n${a.goal}\n\n## 方式\nOrbit 已按本次能力检查选择 Mac 界面。仅按任务单目标和当前会话实际提供的能力操作；不要假设未暴露的服务接口。每一步操作后截图确认状态；同一步最多重试 2 次，仍失败就停止并说明卡在哪里。手机 App 不在此 session 操作；若目标确实只有手机 App / 手机登录态且任务单未指定其他渠道，交回 Orbit 重新派发 phone_task，不自行操作其他设备。${china ? '\n这是中国本土服务：严格按 china-services skill 执行；优先使用成熟网页端服务。' : ''}\n\n## 红线\n- 不付款：到支付页立即停止，交回订单信息。\n- 不给任何联系人发消息、不发朋友圈、不加好友、不改设置，除非目标里明确要求。\n- 需要授权手机号、实名信息时停下来说明，不要自行同意。\n\n## 交付\n${a.deliverable ?? '最后一条消息以 ```json 代码块结尾，包含 status（done/blocked/needs_approval）、关键结果字段（价格、时间、状态等）和下一步建议。'}`;
       const model = workerModel(rt);
       const s = await rt.bridge.createSession({ title: `🖥 ${a.title}`, prompt, model, effort: workerEffort(rt, undefined, model), permission: 'manual', skills: china ? ['china-services'] : [] });
       rt.syncSession(s.threadId, { taskId: a.task_id, title: `🖥 ${a.title}` });
@@ -261,7 +290,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'phone_task',
-    description: '开一个手机任务，在专用的小米手机上通过 orbit_phone 操作。何时用：只有手机 App 才能办的服务、需要手机 App 登录态的操作。何时不要用：网页端可直接完成的查询优先用浏览器；这台手机上没有微信，微信小程序、公众号、微信服务不要派给手机。手机敏感点击会自动执行；只有任务单明确授权下单或付款时才可执行，否则明确只查询、不下单/付款。手机忙时等待前一任务完成后再派单。',
+    description: "开一个手机任务，在专用 Android 手机上通过 orbit_phone 操作。仅当用户指定手机，或目标确实只有手机 App / 手机登录态，且相关 MCP / 插件及可行网页均无法覆盖时使用；在目标里写明当次原因。何时不要用：服务接口或浏览器可完成；这台手机不能用微信，微信小程序、公众号、微信服务不要派给它。手机忙时等待前一任务。敏感点击会自动执行；仅按任务单明确授权下单 / 付款，否则只查询。",
     parameters: obj({
       title: S('简短标题'),
       goal: S('任务目标和验收标准；若允许下单或付款，必须在任务单中明确授权，否则按只查询处理'),
@@ -291,7 +320,7 @@ export const TOOLS: Tool[] = [
       pendingPhoneTaskControllers.set(rt.bridge, controller);
       try {
         const china = a.china !== false;
-        const prompt = `## 目标\n${a.goal}\n\n## 设备与操作边界\n必须使用本 session 专属的 orbit_phone MCP 工具在专用小米手机上完成任务。不要操作 Mac、computer use、浏览器或其他手机工具。先调用 phone_begin 并说明当前任务；之后每次只做一个手机动作，检查该动作返回的新截图再决定下一步；无论成功、受阻或失败，最后都必须调用 phone_end。\n${china ? '中国本土服务：遵循 china-services skill，微信小程序、公众号和微信服务通过手机操作。' : ''}\n\n## 支付与账号权限\n只有原任务单明确授权本次下单或付款时，才执行相应动作。默认权限是“只查询，不要下单/付款”；如果任务单没有明确授权、授权不清楚，或只是查询价格/信息，就严格只查询并停在付款前。手机敏感点击会自动执行，不会再弹审批，因此不得自行扩大授权。遇到登录、验证码、扫码或人脸识别，调用 phone_end 后返回 status=needs_human，说明需要主人完成什么；不要尝试绕过。\n\n## 占用与验收\n若 phone_begin 返回 busy，不要重试或并行开任务；报告设备忙并等待前一任务完成。验收手机返回的页面与数据，确认关键结果确实可见；在 JSON 中提供 phone_end 返回的 evidence 截图路径。\n\n## 交付\n${a.deliverable ?? '最后一条消息以 ```json 代码块结尾，包含 status（done/partial/needs_human/needs_approval/blocked/failed）、summary、关键结果字段、needs（如适用）和 evidence 截图路径。'}\n\n${a.task_id ? `关联任务：${a.task_id}${a.step_id ? `，步骤：${a.step_id}` : ''}\n` : ''}`;
+        const prompt = `## 目标\n${a.goal}\n\n## 设备与操作边界\nOrbit 已按本次能力检查选择专用手机。必须使用本 session 专属的 orbit_phone MCP 工具；不要操作 Mac、computer use、浏览器或其他手机工具。用户明确指定手机时遵循指定；否则，若执行中出现已授权服务接口或可行网页能覆盖目标的线索，停止并交回 Orbit 重选渠道，不要自行切换。先调用 phone_begin 并说明当前任务；之后每次只做一个手机动作，检查该动作返回的新截图再决定下一步；无论成功、受阻或失败，最后都必须调用 phone_end。\n${china ? '中国本土服务：遵循 china-services skill。此专用手机不能用微信；微信小程序、公众号和微信服务无法通过本机办理，返回 blocked 并请 Orbit 告知主人。' : ''}\n\n## 支付与账号权限\n只有原任务单明确授权本次下单或付款时，才执行相应动作。默认权限是“只查询，不要下单/付款”；如果任务单没有明确授权、授权不清楚，或只是查询价格/信息，就严格只查询并停在付款前。手机敏感点击会自动执行，不会再弹审批，因此不得自行扩大授权。遇到登录、验证码、扫码或人脸识别，调用 phone_end 后返回 status=needs_human，说明需要主人完成什么；不要尝试绕过。\n\n## 占用与验收\n若 phone_begin 返回 busy，不要重试或并行开任务；报告设备忙并等待前一任务完成。验收手机返回的页面与数据，确认关键结果确实可见；在 JSON 中提供 phone_end 返回的 evidence 截图路径。\n\n## 交付\n${a.deliverable ?? '最后一条消息以 ```json 代码块结尾，包含 status（done/partial/needs_human/needs_approval/blocked/failed）、summary、关键结果字段、needs（如适用）和 evidence 截图路径。'}\n\n${a.task_id ? `关联任务：${a.task_id}${a.step_id ? `，步骤：${a.step_id}` : ''}\n` : ''}`;
         const phonePrompt = `${prompt}\n\n## 必须遵守的交付格式\n最后一条消息必须以一个 JSON 代码块结尾，包含 status（done/partial/needs_human/needs_approval/blocked/failed）、summary、关键结果字段、needs（如适用）和 phone_end 返回的 evidence 截图路径。自定义交付要求只能补充这些字段与格式，不能省略 JSON、status 或 evidence。`;
 
         const title = `📱 ${a.title}`;
@@ -329,11 +358,21 @@ export const TOOLS: Tool[] = [
     async run(a, rt) {
       if (isPhoneRunId(a.session_id)) return '手机任务运行中不能追加指令；它结束后可以再派一个 phone_task。';
       // A steer cannot switch models or efforts; only a fresh turn takes the owner's 执行模型 and 执行任务推理强度 (and updates what the app shows).
-      const live = rt.bridge.sessions.get(a.session_id);
+      const stored = rt.state.session(a.session_id);
+      let live = rt.bridge.sessions.get(a.session_id);
+      // Startup reattachment can fail when a selected MCP is no longer configured. Retry from the
+      // persisted selection before sending so the worker never silently resumes without its tools.
+      const storedMcpServices = stored?.mcpServices ?? [];
+      const liveMcpServices = live?.mcpServices ?? [];
+      const liveSelectionMatches = liveMcpServices.length === storedMcpServices.length &&
+        liveMcpServices.every((id, index) => storedMcpServices[index] === id);
+      if (stored && storedMcpServices.length && (!live || !rt.bridge.isSubscribed(a.session_id) || !liveSelectionMatches)) {
+        live = await rt.bridge.attach(a.session_id, stored.title, stored.permission, storedMcpServices);
+      }
       const steering = Boolean(live?.activeTurnId);
       const model = steering ? undefined : workerModel(rt);
       // The turn runs on the owner's model if there is one, else on whatever the session already uses.
-      const effort = steering ? undefined : workerEffort(rt, a.effort, model ?? live?.model ?? rt.state.session(a.session_id)?.model);
+      const effort = steering ? undefined : workerEffort(rt, a.effort, model ?? live?.model ?? stored?.model);
       const r = await rt.bridge.send(a.session_id, a.text, { effort, outputSchema: a.output_schema, model });
       rt.syncSession(a.session_id);
       return r === 'steered' ? '已作为追加指令插入正在进行的一轮' : '已开始新一轮';
@@ -405,8 +444,11 @@ export const TOOLS: Tool[] = [
     parameters: obj({ session_id: S('源 session'), title: S('新标题') }, ['session_id', 'title']),
     async run(a, rt) {
       const r = await rt.bridge.rpc.request<any>('thread/fork', { threadId: a.session_id });
-      const s = await rt.bridge.attach(r.thread.id, a.title);
-      rt.syncSession(s.threadId, { title: a.title });
+      const stored = rt.state.sessions().find((item) => item.id === a.session_id);
+      const liveSource = rt.bridge.sessions.get(a.session_id);
+      const mcpServices = stored?.mcpServices?.length ? stored.mcpServices : liveSource?.mcpServices?.length ? liveSource.mcpServices : undefined;
+      const s = await rt.bridge.attach(r.thread.id, a.title, 'manual', mcpServices);
+      rt.syncSession(s.threadId, { title: a.title, ...(mcpServices?.length ? { mcpServices: [...mcpServices] } : {}) });
       return { session_id: s.threadId };
     },
   },
@@ -440,7 +482,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'connectors_list',
-    description: '列出可直接调用的 ChatGPT 插件 / MCP 服务器及其工具名。Google Calendar、Google Drive 等插件的工具通常挂在 codex_apps 下，名字带插件前缀，例如 google_calendar.search_events。何时用：第一次需要某个插件（日历、云盘、邮件…）时确认它是否已连接、工具叫什么。列表里没有某个插件，说明主人还没有安装或连接它：告诉主人去 Codex 安装并连接（Codex CLI 里输入 /plugins，或 ChatGPT 设置 → Apps），不要退回 computer use。',
+    description: "列出当前 Codex 会话可直接调用的插件 / MCP 服务器、工具名和连接状态。何时用：每项外部服务任务在选路前，按相关性确认实际暴露的工具与权限；只使用列表里的名称。列表中缺少目标能力或权限不足时停止重试，说明需要主人连接 / 授权；若用户未指定渠道且有合适的公开网页路径，可搜索或浏览器处理，不要自动安装、改配置或直接退到 GUI。",
     parameters: obj({ server: S('只看某个服务器的工具（可选）') }),
     async run(a, rt) {
       const servers = await rt.bridge.mcpServers();
@@ -451,7 +493,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: 'connector_call',
-    description: '直接调用一个 ChatGPT 插件 / MCP 工具（不经过 Codex agent，秒级返回）。查日历、加日程、改日程，以及在云盘里找、读、建文件，都用它：不要自己写 API 调用，也不要用 computer use 或浏览器。何时用：一次性的读写，例如查今天的日程、新建一个日程、列出云盘文件。server 通常是 codex_apps，工具名先用 connectors_list 查（形如 google_calendar.search_events）。何时不要用：需要多步推理或跨插件整合的任务（开 session，并在任务单里写明「使用 Google Calendar / Google Drive 插件」）。注意：写操作（创建日程、发邮件）属于对外动作，先确认主人意图；发给他人的内容必须先 request_approval。',
+    description: "直接调用 connectors_list 当前列出的一个插件 / MCP 工具，不经过 Codex agent。何时用：单步查询或明确的一次性读写，且目标步骤确由该工具覆盖。工具名先通过 connectors_list 确认；内置目录中的 MCP 服务需在执行会话以 mcp_services 明确注入，不能因 mcp_list 显示 configured 就假定可直接调用。何时不要用：多步推理或跨服务整合（开会话并点名工具）。缺权限或调用失败时停止反复尝试并说明所需授权。创建、对外发送、删除等操作仍遵循原确认与审批要求。",
     parameters: obj({
       server: S('服务器名（来自 connectors_list），ChatGPT 插件通常在 codex_apps'),
       tool: S('工具名'),
@@ -480,7 +522,9 @@ export const TOOLS: Tool[] = [
       }
       const v = validateProps(a.component, a.props);
       if (!v.ok) return `渲染失败：${v.error}。请修正后重试。`;
+      const generation = rt.chatGeneration?.();
       const props = await embedCardImages(a.component, v.props); // local / http images → data URLs the phone can show; never echoed back to the bot
+      if (generation !== undefined && rt.chatGeneration?.() !== generation) return '本轮对话已清空。';
       const card = rt.state.renderCard({
         component: a.component, props, msgId: rt.currentMsgId(),
         actions: a.actions?.map((x: any) => ({ id: x.id, label: x.label, style: x.style, requiresApproval: x.requires_approval })),
@@ -497,7 +541,9 @@ export const TOOLS: Tool[] = [
       if (!card) return '没有这张卡片';
       const v = validatePatch(card.component, card.props, a.props);
       if (!v.ok) return `更新失败：${v.error}`;
+      const generation = rt.chatGeneration?.();
       const props = await embedCardImages(card.component, a.props); // only the patch: images already in the card are not touched again
+      if (generation !== undefined && rt.chatGeneration?.() !== generation) return '本轮对话已清空。';
       rt.state.patchCard(a.card_id, props);
       return 'ok';
     },
@@ -651,3 +697,19 @@ function checkPermission(p: Permission | undefined, approvalId: string | undefin
 }
 
 export const TOOL_MAP = new Map(TOOLS.map((t) => [t.name, t]));
+
+function validateMcpServiceSelection(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_MCP_SERVICES || value.some((id) => typeof id !== 'string' || id.length < 1 || id.length > 64)) {
+    throw new Error('mcp_services 必须是最多 ' + MAX_MCP_SERVICES + ' 个有效服务 ID 的数组。');
+  }
+  if (value.length === 0) return [];
+  if (new Set(value).size !== value.length) throw new Error('mcp_services 不能包含重复服务 ID。');
+  const catalog = new Map(listMcpServices().map((item) => [item.id, item]));
+  for (const id of value as string[]) {
+    const item = catalog.get(id);
+    if (!item) throw new Error('mcp_services 包含未知服务 ID；请先用 mcp_list 查看目录。');
+    if (!item.enabled || !item.configured) throw new Error('所选 MCP 服务当前不可用：' + id + '。需要启用服务并完成本地配置后才能派单。');
+  }
+  return [...value] as string[];
+}

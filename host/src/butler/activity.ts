@@ -8,6 +8,7 @@ const LABELS: Record<string, string> = {
   // 自我管理
   yield: '收尾', // never shown: runTool keeps the state idle for it
   skill_load: '查阅方法',
+  mcp_list: '查看服务能力',
   task_create: '建立任务',
   task_update: '更新任务',
   schedule: '设提醒',
