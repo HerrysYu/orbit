@@ -102,8 +102,9 @@ device 连接：
 ### 4.2 req 方法（m）
 | m | d | res.d |
 |---|---|---|
-| `sync` | `{lastSeq}` | `{fromSeq,toSeq,reset}`。随后 host 按顺序推送 `ev`。`reset=true` 表示缺口太大，客户端应清空本地缓存，host 会先发快照事件。host 在处理某条连接的第一个 `sync` 之前不向它推送 `ev` / `live`（这段时间产生的 `ev` 由这次 `sync` 补发，`live` 不补发；`req` / `res` 不受影响），所以客户端每次（重新）连上后都要发 `sync` |
+| `sync` | `{lastSeq}` | `{fromSeq,toSeq,reset,chatCleared?:{seq,clearedAt}}`。随后 host 按顺序推送 `ev`。`reset=true` 表示缺口太大，客户端应清空本地事件缓存，host 重放最近窗口。`chatCleared` 是最近一次清除聊天的持久标记，即使对应事件已超出重放窗口也返回；从未清除时省略。客户端在补发 outbox 前处理该标记。host 在处理某条连接的第一个 `sync` 之前不向它推送 `ev` / `live`（这段时间产生的 `ev` 由这次 `sync` 补发，`live` 不补发；`req` / `res` 不受影响），所以客户端每次（重新）连上后都要发 `sync` |
 | `chat.send` | `{clientId,text,attachments?:[Attachment]}` | `{msgId,duplicate?:true}`。以 `clientId` 幂等，见下方说明 |
+| `chat.clear` | `{}` | `{cleared:true,seq,clearedAt}`。清空聊天并重置管家对话上下文；`seq` 对应同次 `chat.cleared` 事件，`clearedAt` 为 Unix 毫秒 |
 | `chat.interrupt` | `{}` | `{}` |
 | `ui.action` | `{cardId,actionId,value?}` | `{}` |
 | `approval.respond` | `{approvalId,decision:"approve"\|"deny",note?}` | `{}` |
@@ -124,6 +125,13 @@ device 连接：
 | `ping` | `{}` | `{ts}` |
 
 **`chat.send` 幂等**：`clientId` 非空时，host 以它去重（记录持久保存，host 重启后仍有效）。同一个 `clientId` 再次到达时，host 不产生新的 `msg.user`、也不再交给 Orbit，直接返回第一次的 `{msgId,duplicate:true}`；即使这次的 `text` 或附件不同也一样，内容以第一次为准，所以新消息必须用新的 `clientId`。首次发送的响应不带 `duplicate`。`clientId` 为空或缺省时无法去重，每次都算新消息。因此 App 重连后可以放心补发本地 outbox，收到 `duplicate:true` 同样视为发送成功。
+
+**`chat.clear`**：
+- 清除 Host 的 `msg.user` / `msg.assistant` / `ui.render` / `ui.patch` 历史及聊天卡片，重置管家当前线程、短期上下文和旧用户输入队列。旧轮次的迟到回复不得重新写回；仅中止管家这轮对话，不取消独立 worker 或手机任务。
+- 保留长期记忆、任务、执行会话、审批、设置、配对、导入资料、调度与审计。保留 `client_msgs` 去重元数据，因此已清除消息的旧 `clientId` 再次发送仍不会执行两次。全局事件序号继续递增。
+- 删除聊天事件和插入 `chat.cleared` 在同一数据库事务内完成。事件可能先于 RPC 响应到达；客户端按清除 `seq` 幂等处理，迟到响应不能再次删除清除后产生的新消息。收到清除标记后还需清理本地旧聊天、旧待发消息和旧流式状态，并持久保存该标记。
+- 最近一次 `{seq,clearedAt}` 另行持久保存并随 `sync` 返回，避免长时间离线的设备错过清除事件。处理标记不能回退全局 `lastSeq`，也不能删除 `seq` 大于标记的新聊天。
+- App 提供二次确认；离线或请求失败时不先行清空。这个功能管理 Orbit 的聊天与上下文，不删除 Codex 等第三方服务保存的线程归档或诊断日志。
 
 **`tasks.clear`**：
 - 不带 `ids`：清除所有已结束的任务。带 `ids`：只清除其中已结束的；仍在进行的（`planning`/`running`/`waiting_user`/`blocked`）和不存在的 id 保持原样，放进 `skipped`。`ids:[]` 什么也不清除；`ids` 不是数组时返回错误。
@@ -148,6 +156,7 @@ device 连接：
 |---|---|
 | `msg.user` | `{id,clientId,text,attachments,ts}` |
 | `msg.assistant` | `{id,text,interrupted?,proactive?,ts}`：完整消息，在流式结束时发送 |
+| `chat.cleared` | `{clearedAt:number}`：清空聊天的持久标记；使用事件本身的 `seq` 作为幂等边界 |
 | `ui.render` | `{card:Card}` |
 | `ui.patch` | `{id,props}`：对 props 做浅合并 |
 | `task.upsert` | `Task` |
@@ -183,7 +192,7 @@ Task = {id,title,goal,status:"planning"|"running"|"waiting_user"|"blocked"|"done
         steps:[{id,title,status:"pending"|"running"|"done"|"failed"|"skipped",sessionId?}],
         summary?, createdAt, updatedAt}
 Session = {id,taskId?,title,model?,status:"running"|"idle"|"waiting_approval"|"error"|"archived",
-           permission:"manual"|"auto",lastActivity?,createdAt,updatedAt}
+           permission:"manual"|"auto",mcpServices?:string[],lastActivity?,createdAt,updatedAt}
 Approval = {id,title,detail,risk:"low"|"medium"|"high",sessionId?,kind:"command"|"fileChange"|"permissions"|"elicitation"|"action",
             requireBiometric,createdAt,expiresAt?}
 Memory = {id,text,kind:"profile"|"preference"|"fact"|"person"|"place"|"date",source:"explicit"|"inferred",confidence,createdAt,updatedAt}
@@ -193,6 +202,8 @@ Settings = {butler:{name,avatar?:string /* data:image/jpeg;base64 或 emoji:🐱
             dailyNotifyBudget, defaultPermission:"manual"|"auto", allowAutoFullAccess}
 ```
 所有 `ts`、`createdAt` 等时间字段均为 Unix 毫秒。
+
+`Session.mcpServices` 是 Host 为恢复普通执行线程保存的可选 MCP 服务 ID 列表，不包含凭据或服务配置。旧客户端可忽略该字段；未选择 MCP 或旧版会话可以缺省。
 
 **`Settings.models`（模型与推理强度）**：`butler` / `heartbeat` / `codexDefault` 是模型 id，`butlerEffort` / `heartbeatEffort` / `codexEffort` 是对应的推理强度，取 Codex 的名字（如 `minimal` `low` `medium` `high` `xhigh` `max`，某个模型能选哪些见 `models.list` 里它的 `efforts`）。模型 id 为空字符串表示「自动」；三个强度为空字符串、`null` 或缺省都表示「自动」。`settings.set` 里三个强度必须是 `""`（或 `null`，host 存成 `""`）或匹配 `^[a-z]{1,16}$`，否则返回错误「无效的推理强度」。三组设置各管一件事：
 - **bot**：模型 = `butler`（空 = Codex 目录的默认模型）；强度 = `butlerEffort`（空 = `medium`）。

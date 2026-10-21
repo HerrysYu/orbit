@@ -31,6 +31,10 @@ opa start
 
 模型列表在 Host 的动态目录基础上补充 `GPT-6.1 Sol`（`gpt-6.1-sol`），bot、心跳与 Codex 默认模型均可选。服务器已返回该模型时保留其元数据，不重复添加，也不自动改变已保存的选择。补充目录选项并不等于已验证当前账号能完成该模型的推理请求。
 
+## 清除聊天记录
+
+iPhone App 的聊天页右上角菜单提供「清除聊天记录」，确认后清空聊天并开始新的对话上下文。长期记忆、任务、执行会话和配对信息保留，独立任务继续运行。需要连接 Mac；清除成功后同步到其他已配对设备，离线设备在重连时更新。更新此功能需要同时使用新版 Host 和重新构建的 App。
+
 | 目录 | 内容 |
 |---|---|
 | `src/codex/` | app-server JSON-RPC 客户端与生成的协议类型 |
@@ -43,13 +47,13 @@ opa start
 
 ## Android 手机准备
 
-V1 使用专用小米 Android 手机（`23116PN5BC`，默认序列号 `e7fe2f2a`）。微信小程序、公众号、服务一律走手机；有可用网页端的服务仍走浏览器。Mac 微信会拦截 computer use，不能作为替代通道。
+V1 使用专用小米 Android 手机（`23116PN5BC`，默认序列号 `e7fe2f2a`）。服务 MCP / 已连接插件能完成的步骤优先使用接口，再考虑可行网页；只有确需手机 App 或手机登录态时才派手机 worker。这台专用手机不能用微信，Mac 微信也会拦截 computer use；没有其他可行入口时，由主人在自己的微信完成。
 
 Mac 先准备 `uv`、Python ≥ 3.11 和 Android Platform Tools（`adb` 在 PATH 中），然后：
 
 1. 在手机开发者选项开启「USB 调试」和「**USB 调试（安全设置）**」。只开前者可能能截图却不能点击、输入。USB 连接 Mac，在手机上信任此电脑。
 2. 从 [ADB Keyboard releases](https://github.com/senzhk/ADBKeyBoard/releases) 下载 APK，执行 `adb -s e7fe2f2a install ADBKeyboard.apk`，在手机设置里启用该输入法。工具输入前临时切换，结束后恢复原输入法。
-3. 装好并登录微信、美团等 App；保持解锁，可开启「充电时不锁屏」或延长息屏时间。
+3. 装好并登录实际需要的独立服务 App（例如美团）；保持解锁，可开启「充电时不锁屏」或延长息屏时间。
 4. 在 `host/` 执行：
 
 ```bash
@@ -99,6 +103,12 @@ bot 的大脑是一个长期存在的 Codex thread，历史只增不减。Host �
 ## 国内服务方法发现
 
 国内生活 / 办事任务先由管家加载 `china-service-discovery`，搜索当前可行方法和官方入口，核对地区、登录与工具能力后再拆解、派单。技能内的服务地图提供 App / 网站候选，不固定平台；查到必须用手机的步骤才创建手机 worker。这条前置流程写在始终加载的 `butler-core`，Host 会自动读取仓库技能索引，无需额外安装到 worker。
+
+## 内置 MCP 服务
+
+国内外服务目录覆盖高德、12306、飞书、Playwright、网页 Fetch、Tavily、GitHub 和 Notion。大脑先 `mcp_list` 查配置，再在普通执行线程的 `mcp_services` 中选择服务；需要凭据的项不会被当成已连接。手机线程和现有 ChatGPT 插件保持各自接入方式。
+
+用 `opa mcp init` 创建实例内配置，`opa mcp list` 查看状态，`opa mcp check rail_12306 fetch playwright` 检查无 Key 服务；ModelScope 标准配置可通过 `opa mcp import <json-path>` 导入。完整服务说明、凭据变量与配置示例见 [内置 MCP 服务](../docs/mcp-services.md)。
 
 ## 验证
 

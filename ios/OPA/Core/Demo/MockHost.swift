@@ -32,6 +32,7 @@ final class MockHost: HostBackend {
     private var sentMessages: [String: String] = [:]
     private var refusedOnce: Set<String> = []
     private var queuedOnce: Set<String> = []
+    private var chatClearBarrier: (seq: Int64, clearedAt: Int64)?
 
     init(model: AppModel) {
         self.model = model
@@ -145,6 +146,14 @@ final class MockHost: HostBackend {
         case "chat.interrupt":
             streamJob?.cancel()
             return [:]
+        case "chat.clear":
+            streamJob?.cancel()
+            refusedOnce.removeAll()
+            queuedOnce.removeAll()
+            let clearedAt = Clock.nowMs
+            emit("chat.cleared", ["clearedAt": .number(Double(clearedAt))])
+            chatClearBarrier = (seq, clearedAt)
+            return ["cleared": .bool(true), "seq": .number(Double(seq)), "clearedAt": .number(Double(clearedAt))]
         case "ui.action":
             let cardId = d["cardId"]?.string ?? ""
             let action = d["actionId"]?.string ?? ""
@@ -216,7 +225,12 @@ final class MockHost: HostBackend {
         case "import.add":
             return ["ids": .array(d["items"]?.items.map { _ in .string(ShortID.make()) } ?? [])]
         case "sync":
-            return ["fromSeq": 0, "toSeq": .number(Double(seq)), "reset": false]
+            var response: JSONValue = ["fromSeq": 0, "toSeq": .number(Double(seq)), "reset": false]
+            if let barrier = chatClearBarrier, case .object(var object) = response {
+                object["chatCleared"] = ["seq": .number(Double(barrier.seq)), "clearedAt": .number(Double(barrier.clearedAt))]
+                response = .object(object)
+            }
+            return response
         case "ping":
             return ["ts": .number(Double(Clock.nowMs))]
         default:
@@ -278,6 +292,7 @@ final class MockHost: HostBackend {
                 self.live("msg.delta", ["id": .string(id), "text": .string(String(ch))])
                 try? await Task.sleep(for: .milliseconds(28))
             }
+            guard !Task.isCancelled else { return }
             self.emit("msg.assistant", ["id": .string(id), "text": .string(acc), "interrupted": .bool(interrupted), "ts": .number(Double(Clock.nowMs))])
             self.live("butler.status", ["state": "idle"])
         }

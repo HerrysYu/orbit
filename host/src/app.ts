@@ -60,6 +60,7 @@ export class Host {
       case 'sync': return {}; // gateway handles the replay
       case 'ping': return { ts: Date.now() };
       case 'chat.send': return this.chatSend(d);
+      case 'chat.clear': return b.clearChat();
       case 'chat.interrupt': b.interrupt(); return {};
       case 'ui.action': b.uiAction(String(d.cardId), String(d.actionId), d.value); return {};
       case 'approval.respond': b.approvalResponse(String(d.approvalId), d.decision === 'approve', d.note); return {};
@@ -132,6 +133,7 @@ export class Host {
       const seen = this.db.sql.prepare('SELECT msg_id FROM client_msgs WHERE client_id = ?').get(clientId) as { msg_id: string } | undefined;
       if (seen) return { msgId: seen.msg_id, duplicate: true };
     }
+    if (this.butler.isChatClearing()) throw new Error('chat.clear is in progress; retry chat.send');
     const msgId = this.butler.userMessage(String(d.text ?? ''), clientId, d.attachments ?? []);
     if (clientId) this.db.sql.prepare('INSERT OR IGNORE INTO client_msgs(client_id, msg_id, ts) VALUES (?, ?, ?)').run(clientId, msgId, Date.now());
     return { msgId };

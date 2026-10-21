@@ -74,6 +74,9 @@ export class Butler implements Rt {
   private roundUserTriggered = false;
   private roundHeartbeat = false;
   private recent: string[] = [];
+  /** Increments whenever the conversational timeline is cleared; old turns may finish but can no longer publish. */
+  private chatEpoch = 0;
+  private chatClearing = false;
   private msgId?: string;
   private heartbeatTimer?: NodeJS.Timeout;
   private lastRoundAt = 0;
@@ -120,14 +123,53 @@ export class Butler implements Rt {
   device(): DeviceContext | undefined { return this.db.get<DeviceContext>('device.context'); }
   tz(): string { return this.device()?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone; }
   currentMsgId() { return this.msgId; }
+  chatGeneration() { return this.chatEpoch; }
   requestYield() { this.yielded = true; }
+  isChatClearing() { return this.chatClearing; }
+
+  /** Clear only conversational state. The phone runner, worker sessions, tasks, memories and settings keep running. */
+  clearChat(): { cleared: true; seq: number; clearedAt: number } {
+    if (this.chatClearing) throw new Error('chat.clear is already in progress');
+    const previousEpoch = this.chatEpoch;
+    this.chatClearing = true;
+    this.chatEpoch++;
+    let committed = false;
+    try {
+      const cleared = this.ev.clearChat();
+      committed = true;
+      const target = this.brain.resetForClear();
+      this.brain.interruptAndArchive(target);
+      this.inbox = this.inbox.filter((e) => !e.fromUser);
+      this.recent.length = 0;
+      this.streamingId = undefined;
+      this.streamText = '';
+      this.streamStarted = false;
+      this.sentLen = 0;
+      this.msgId = undefined;
+      this.sentSections.clear();
+      this.statusThread = undefined;
+      this.lastCompactAt = 0;
+      try { this.ev.emitLive('butler.status', { state: 'idle' }); } catch { /* the durable clear is already complete */ }
+      return { cleared: true, seq: cleared.seq, clearedAt: (cleared.d as { clearedAt: number }).clearedAt };
+    } catch (e) {
+      if (!committed) this.chatEpoch = previousEpoch;
+      throw e;
+    } finally {
+      this.chatClearing = false;
+    }
+  }
 
   syncSession(threadId: string, patch: Partial<Session> = {}): Session | undefined {
     const live = this.bridge.sessions.get(threadId);
+    const changes = { ...patch };
+    if (!changes.mcpServices?.length) delete changes.mcpServices;
     return this.state.upsertSession({
       id: threadId,
-      ...(live ? { title: live.title, model: live.model, status: live.status, permission: live.permission, lastActivity: live.lastActivity } : {}),
-      ...patch,
+      ...(live ? {
+        title: live.title, model: live.model, status: live.status, permission: live.permission, lastActivity: live.lastActivity,
+        ...(live.mcpServices?.length ? { mcpServices: [...live.mcpServices] } : {}),
+      } : {}),
+      ...changes,
     });
   }
 
@@ -162,7 +204,7 @@ export class Butler implements Rt {
     for (const s of this.state.sessions()) {
       if (s.status === 'archived' || s.id.startsWith('phone_')) continue; // phone runs are not Codex threads
       try {
-        await this.bridge.attach(s.id, s.title, s.permission);
+        await this.bridge.attach(s.id, s.title, s.permission, s.mcpServices);
       } catch (e: any) {
         log.debug('butler', `cannot reattach ${s.id}: ${e?.message}`);
       }
@@ -177,13 +219,18 @@ export class Butler implements Rt {
 
   // ───────────── inputs ─────────────
   push(e: Omit<BEvent, 'ts'>) {
+    if (this.chatClearing && e.fromUser) return;
     const ev = { ...e, ts: Date.now() };
     // A heartbeat round runs on the heartbeat model and effort, so the user's message waits for it instead of joining it.
     // A compaction takes no input at all: whatever arrives meanwhile queues up and gets its round once it is done.
     if (this.running && !this.compacting && e.fromUser && this.brain.busy && !this.roundHeartbeat) {
       // The user takes priority: inject into the brain's running turn (it sees it at the next step).
+      const epoch = this.chatEpoch;
       const bar = this.nextStatusBar();
-      void this.brain.steer(this.renderEvents([ev], bar.text)).then((ok) => { if (!ok) { bar.undo(); this.inbox.push(ev); void this.pump(); } });
+      void this.brain.steer(this.renderEvents([ev], bar.text)).then((ok) => {
+        if (epoch !== this.chatEpoch) return;
+        if (!ok) { bar.undo(); this.inbox.push(ev); void this.pump(); }
+      });
       return;
     }
     this.inbox.push(ev);
@@ -463,6 +510,7 @@ export class Butler implements Rt {
   }
 
   private async round(batch: BEvent[]) {
+    const epoch = this.chatEpoch;
     this.lastRoundAt = Date.now();
     const st = this.settings();
     this.roundUserTriggered = batch.some((e) => e.fromUser);
@@ -476,22 +524,29 @@ export class Butler implements Rt {
         model: st.models.butler || undefined,
         carryOver: async () => this.recent.slice(-40).join('\n'),
       });
+      if (epoch !== this.chatEpoch) return;
       // A different thread has seen none of the status bar: tell it everything again.
       if (threadId !== this.statusThread) { this.statusThread = threadId; this.sentSections.clear(); }
       this.ev.emitLive('butler.status', { state: 'thinking' });
       const turn = await this.turnSettings(st, batch);
+      if (epoch !== this.chatEpoch) return;
       bar = this.nextStatusBar();
       const status = await this.brain.turn(this.renderEvents(batch, bar.text), turn);
       bar = undefined;
-      if (status === 'failed' && this.roundUserTriggered) this.say('抱歉，我这边出了点问题，稍后再试一次？', false);
+      if (epoch === this.chatEpoch && status === 'failed' && this.roundUserTriggered) this.say('抱歉，我这边出了点问题，稍后再试一次？', false);
     } catch (e: any) {
-      bar?.undo(); // the turn never started: the brain has not seen this bar
-      log.error('bot', 'brain turn failed:', e?.message ?? e);
-      if (this.roundUserTriggered) this.say('抱歉，我暂时连不上 Mac 上的 Codex。请确认 Codex 已安装并登录，稍后再试一次。', false);
+      if (epoch === this.chatEpoch) {
+        bar?.undo(); // the turn never started: the brain has not seen this bar
+        log.error('bot', 'brain turn failed:', e?.message ?? e);
+        if (this.roundUserTriggered) this.say('抱歉，我暂时连不上 Mac 上的 Codex。请确认 Codex 已安装并登录，稍后再试一次。', false);
+      }
     } finally {
-      this.finishStream(false);
-      this.msgId = undefined;
+      if (epoch === this.chatEpoch) {
+        this.finishStream(false);
+        this.msgId = undefined;
+      }
     }
+    if (epoch !== this.chatEpoch) return;
     for (const e of batch) this.recent.push(`[${e.type}] ${e.body.slice(0, 300)}`);
     if (this.recent.length > 200) this.recent.splice(0, this.recent.length - 200);
   }
@@ -554,6 +609,7 @@ export class Butler implements Rt {
    * A Codex that cannot be reached is not an attempt: the thread stays as it is and the next idle moment tries again.
    */
   async maybeCompact(): Promise<boolean> {
+    const epoch = this.chatEpoch;
     const why = this.compactBlocker();
     if (why) { log.debug('bot', `brain thread left alone: ${why}`); return false; }
     const before = this.brain.contextTokens;
@@ -567,7 +623,8 @@ export class Butler implements Rt {
     let ok: boolean | undefined; // undefined: Codex could not even be asked
     try {
       ok = await this.brain.compact();
-      if (!ok) {
+      if (epoch !== this.chatEpoch) ok = undefined;
+      else if (!ok) {
         log.warn('bot', 'compaction failed or timed out; the next round starts a fresh brain thread');
         this.brain.rotate();
       }
@@ -577,14 +634,14 @@ export class Butler implements Rt {
       this.compacting = false;
       this.running = wasRunning;
     }
-    if (ok !== undefined) {
+    if (epoch === this.chatEpoch && ok !== undefined) {
       this.lastCompactAt = Date.now();
       this.sentSections.clear();
       log.info('bot', `brain thread ${ok ? 'compacted' : 'rotated'} (it held ${before} tokens)`);
       this.db.audit('bot', 'compact', { before, window, ok });
     }
     if (!wasRunning && this.inbox.length) void this.pump();
-    return ok !== undefined;
+    return epoch === this.chatEpoch && ok !== undefined;
   }
 
   private wireBrain() {
@@ -650,6 +707,7 @@ export class Butler implements Rt {
   }
 
   private async runTool(name: string, args: any): Promise<{ text: string; images?: string[] }> {
+    const epoch = this.chatEpoch;
     if (name !== 'yield') this.ev.emitLive('butler.status', { state: 'acting', detail: toolActivityLabel(name), tool: name });
     let output: unknown;
     try {
@@ -663,11 +721,15 @@ export class Butler implements Rt {
       output = `错误：${e?.message ?? e}`;
     }
     if (name === 'yield') {
+      if (epoch !== this.chatEpoch) return { text: '本轮对话已清空。' };
       // Nothing more to do this round: end the brain turn so it doesn't keep generating.
-      setTimeout(() => void this.brain.interrupt().then(() => this.finishStream(false)), 50);
+      setTimeout(() => {
+        if (epoch === this.chatEpoch) void this.brain.interrupt().then(() => this.finishStream(false));
+      }, 50);
       this.ev.emitLive('butler.status', { state: 'idle' });
       return { text: 'ok，本轮结束。' };
     }
+    if (epoch !== this.chatEpoch) return { text: '本轮对话已清空。' };
     this.ev.emitLive('butler.status', { state: 'thinking' });
     if (Array.isArray(output) && output.every((p: any) => p?.type === 'input_text' || p?.type === 'input_image')) {
       return {

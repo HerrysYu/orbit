@@ -46,6 +46,8 @@ final class AppModel {
     var butlerTool: String?
     var outboxCount = 0
     var toast: String?
+    /// True while `chat.clear` is in flight; prevents duplicate host requests.
+    var isClearingChat = false
     /// Items waiting in the chat composer tray (photos, files, links, reminders). Lives on the model so
     /// drag & drop and `opa://import` can land here from anywhere.
     var draftItems: [DraftItem] = []
@@ -110,6 +112,13 @@ final class AppModel {
     /// Task ids removed by events while replaying the stored log (their Live Activities are ended once, afterwards).
     @ObservationIgnored var replayRemovedTaskIds: Set<String> = []
     @ObservationIgnored var inFlightDeliveries: Set<String> = []
+    /// Incremented at each accepted chat clear so completions from older `chat.send` requests are inert.
+    @ObservationIgnored var chatGeneration = 0
+    /// Late echoes/finals from work that was pending at a clear barrier must not restore erased history.
+    @ObservationIgnored var clearedClientIds: Set<String> = []
+    @ObservationIgnored var clearedStreamIds: Set<String> = []
+    @ObservationIgnored var lastChatClearSeq: Int64 = 0
+    @ObservationIgnored var chatClearPersistencePending = false
     /// Bumped on every stream delta / start; the "idle and quiet for 3 s" check compares it.
     @ObservationIgnored var streamActivityToken = 0
     @ObservationIgnored var streamIdleTask: Task<Void, Never>?
@@ -173,6 +182,10 @@ final class AppModel {
         static let deviceName = "opa.deviceName"
         static let lastConnectedAt = "opa.lastConnectedAt"
         static let lastSeenOnlineAt = "opa.lastSeenOnlineAt"
+        static let chatClearSeq = "opa.chatClearSeq"
+        static let chatClearPersistencePending = "opa.chatClearPersistencePending"
+        static let clearedChatClientIds = "opa.clearedChatClientIds"
+        static let clearedChatStreamIds = "opa.clearedChatStreamIds"
     }
 
     init(inMemory: Bool = false, defaults: UserDefaults = .standard, backend: (any HostBackend)? = nil,
@@ -189,6 +202,10 @@ final class AppModel {
         self.liveActivities = liveActivities ?? LiveActivityController()
         backendOverride = backend
         lastSeq = Int64(defaults.integer(forKey: DefaultsKey.lastSeq))
+        lastChatClearSeq = Int64(defaults.integer(forKey: DefaultsKey.chatClearSeq))
+        chatClearPersistencePending = defaults.bool(forKey: DefaultsKey.chatClearPersistencePending)
+        clearedClientIds = Set(defaults.stringArray(forKey: DefaultsKey.clearedChatClientIds) ?? [])
+        clearedStreamIds = Set(defaults.stringArray(forKey: DefaultsKey.clearedChatStreamIds) ?? [])
         if let data = defaults.data(forKey: DefaultsKey.settings), let s = try? JSONDecoder().decode(Settings.self, from: data) {
             settings = s
             serverSettings = s
@@ -313,7 +330,15 @@ final class AppModel {
         persistence.wipe()
         clearState()
         lastSeq = 0
+        lastChatClearSeq = 0
+        chatClearPersistencePending = false
+        clearedClientIds = []
+        clearedStreamIds = []
         defaults.set(0, forKey: DefaultsKey.lastSeq)
+        defaults.removeObject(forKey: DefaultsKey.chatClearSeq)
+        defaults.removeObject(forKey: DefaultsKey.chatClearPersistencePending)
+        defaults.removeObject(forKey: DefaultsKey.clearedChatClientIds)
+        defaults.removeObject(forKey: DefaultsKey.clearedChatStreamIds)
         imports = []
         attachmentCache.wipe()
         refreshOutboxCount()
@@ -344,6 +369,10 @@ final class AppModel {
         defaults.set(true, forKey: DefaultsKey.demo)
         clearState()
         lastSeq = 0   // demo uses its own sequence space; the real lastSeq stays in UserDefaults
+        lastChatClearSeq = 0
+        chatClearPersistencePending = false
+        clearedClientIds = []
+        clearedStreamIds = []
         isDemo = true
         let mock = MockHost(model: self)
         demo = mock
@@ -363,6 +392,10 @@ final class AppModel {
         liveActivities.endAll()
         clearState()
         lastSeq = Int64(defaults.integer(forKey: DefaultsKey.lastSeq))
+        lastChatClearSeq = Int64(defaults.integer(forKey: DefaultsKey.chatClearSeq))
+        chatClearPersistencePending = defaults.bool(forKey: DefaultsKey.chatClearPersistencePending)
+        clearedClientIds = Set(defaults.stringArray(forKey: DefaultsKey.clearedChatClientIds) ?? [])
+        clearedStreamIds = Set(defaults.stringArray(forKey: DefaultsKey.clearedChatStreamIds) ?? [])
         connection = .idle
         bootstrap()
     }
@@ -390,14 +423,28 @@ final class AppModel {
 
     // MARK: Sync
 
-    private func sync() async {
+    func sync() async {
         do {
             let res = try await request("sync", ["lastSeq": .number(Double(lastSeq))], timeout: .seconds(30))
+            let barrier = res["chatCleared"]
+            let barrierSeq = barrier?["seq"]?.int64
+            let barrierClearedAt = barrier?["clearedAt"]?.int64
+            let resetAttachmentIds: Set<String>
+            if res["reset"]?.bool == true, let barrierSeq, barrierSeq > 0, let barrierClearedAt {
+                resetAttachmentIds = chatAttachmentClientIds(through: barrierSeq, clearedAt: barrierClearedAt)
+            } else {
+                resetAttachmentIds = []
+            }
             if res["reset"]?.bool == true {
                 persistence.clearEvents()
                 clearState()
                 lastSeq = 0
                 defaults.set(0, forKey: DefaultsKey.lastSeq)
+            }
+            if barrier != nil, let seq = barrierSeq, seq > 0, let clearedAt = barrierClearedAt {
+                _ = applyChatClear(seq: seq, ts: clearedAt,
+                                   payload: ["clearedAt": .number(Double(clearedAt))], animated: false,
+                                   additionalAttachmentClientIds: resetAttachmentIds)
             }
             // The host answers first and then streams the missed events. Wait (briefly) until they are in, so that the
             // outbox flush that follows does not resend a message whose echo is still on its way, and so that messages
@@ -416,12 +463,13 @@ final class AppModel {
         }
     }
 
-    private func replayStoredEvents() {
+    func replayStoredEvents() {
         isReplaying = true
         defer { isReplaying = false }
         var echoed: Set<String> = []
         for e in persistence.allEvents() {
             guard let d = try? JSONValue(data: e.payload) else { continue }
+            if e.seq <= lastChatClearSeq, Self.isChatHistoryEvent(e.k) { continue }
             apply(k: e.k, d: d, ts: e.ts, seq: e.seq, animated: false)
             if e.k == "msg.user", let clientId = Self.clientId(of: d) { echoed.insert(clientId) }
         }
@@ -481,6 +529,10 @@ final class AppModel {
     }
 
     // MARK: Helpers
+
+    nonisolated static func isChatHistoryEvent(_ kind: String) -> Bool {
+        ["msg.user", "msg.assistant", "ui.render", "ui.patch"].contains(kind)
+    }
 
     var spring: Animation { .spring(response: 0.4, dampingFraction: 0.85) }
 

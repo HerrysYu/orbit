@@ -60,6 +60,215 @@ extension AppModel {
     var isButlerBusy: Bool { isReplying }
     func interrupt() { stopReply() }
 
+    var canClearChat: Bool { canUseHost && !isClearingChat }
+
+    /// Clears this conversation on the host and applies the same durable barrier locally.
+    @discardableResult
+    func clearChatHistory() async -> Bool {
+        guard !isClearingChat else { return false }
+        guard canUseHost else {
+            showToast("请先连接 Mac，再清除聊天记录")
+            return false
+        }
+
+        isClearingChat = true
+        defer { isClearingChat = false }
+        let oldClientIds = pendingChatClientIds
+        let oldStreamIds = currentChatStreamIds
+        let startingClearSeq = lastChatClearSeq
+
+        do {
+            let response = try await request("chat.clear", .object([:]), timeout: .seconds(30))
+            guard response["cleared"]?.bool == true,
+                  let seq = response["seq"]?.int64, seq > 0,
+                  let clearedAt = response["clearedAt"]?.int64 else {
+                showToast("Mac 没有确认清除聊天记录")
+                return false
+            }
+            let payload: JSONValue = ["clearedAt": .number(Double(clearedAt))]
+            guard applyChatClear(seq: seq, ts: clearedAt, payload: payload, animated: true,
+                                 outboxClientIds: oldClientIds, knownStreamIds: oldStreamIds) else { return false }
+            showToast("聊天记录已清除")
+            return true
+        } catch {
+            if lastChatClearSeq > startingClearSeq {
+                showToast("聊天记录已清除")
+                return true
+            }
+            let message = error.localizedDescription.lowercased()
+            if message.contains("unknown method") || message.contains("method not found") || message.contains("unknown_method") {
+                showToast("电脑端 Orbit 版本较旧，请先更新后再清除聊天记录")
+            } else {
+                showToast("清除聊天记录失败：\(error.localizedDescription)")
+            }
+            return false
+        }
+    }
+
+    /// Pending sends and known streams at a local clear request boundary.
+    private var pendingChatClientIds: Set<String> {
+        var ids = Set(persistence.outbox().map(\.clientId)).union(inFlightDeliveries)
+        for item in timelineStore.items {
+            if case .user(let message) = item, message.pending { ids.insert(message.clientId) }
+        }
+        return ids
+    }
+
+    private var currentChatStreamIds: Set<String> {
+        var ids = streamingIds.union(streamsClosedLocally)
+        for item in timelineStore.items {
+            if case .assistant(let message) = item, message.streaming { ids.insert(message.id) }
+        }
+        return ids
+    }
+
+    /// Applies a host clear barrier. The event path removes all outbox rows present at arrival; a response path removes
+    /// only rows captured when this clear began, so messages ordered after a delayed response remain visible.
+    @discardableResult
+    func applyChatClear(seq: Int64, ts: Int64, payload: JSONValue, animated: Bool,
+                        outboxClientIds: Set<String>? = nil, knownStreamIds: Set<String>? = nil,
+                        additionalAttachmentClientIds: Set<String> = [],
+                        persist: Bool = true) -> Bool {
+        guard seq > 0 else { return false }
+        let clearedAt = payload["clearedAt"]?.int64 ?? ts
+        let localClearTime = clearedAt - hostClockOffsetMs
+        let timestampOutboxIds = Set(persistence.outbox().filter { $0.createdAt <= localClearTime }.map(\.clientId))
+
+        // A duplicate response/event can retry a failed local save, but must never clear UI or attachments again:
+        // new messages may already have arrived above this barrier.
+        if seq <= lastChatClearSeq {
+            let attachmentsRemoved = additionalAttachmentClientIds.isEmpty
+                || attachmentCache.remove(clientIds: additionalAttachmentClientIds)
+            guard persist, !isDemo, chatClearPersistencePending else { return attachmentsRemoved }
+            do {
+                let retryIds = timestampOutboxIds.union(outboxClientIds ?? clearedClientIds)
+                _ = try persistence.clearChat(through: seq, ts: ts, d: payload, outboxClientIds: retryIds)
+                chatClearPersistencePending = false
+                defaults.set(false, forKey: DefaultsKey.chatClearPersistencePending)
+                defaults.removeObject(forKey: DefaultsKey.clearedChatClientIds)
+                defaults.removeObject(forKey: DefaultsKey.clearedChatStreamIds)
+                refreshOutboxCount()
+                return attachmentsRemoved
+            } catch {
+                showToast("Mac 已清除聊天记录，但本机无法保存清除记录：\(error.localizedDescription)")
+                return false
+            }
+        }
+
+        let outboxToRemove = timestampOutboxIds.union(outboxClientIds ?? [])
+        var clientIds = outboxToRemove
+        let knownIds = knownStreamIds ?? []
+        let streamCandidates = knownIds.union(streamingIds).union(streamsClosedLocally)
+        let streamIds = Set(streamCandidates.filter { id in
+            if knownIds.contains(id), timelineStore.order(of: "a:" + id) == nil { return true }
+            return timelineStore.order(of: "a:" + id).map { $0 <= Double(seq) } ?? false
+        })
+        var attachmentClientIds = outboxToRemove.union(additionalAttachmentClientIds)
+        let oldStoredClientIds = Set(persistence.allEvents().compactMap { event -> String? in
+            guard event.seq < seq, event.k == "msg.user", let data = try? JSONValue(data: event.payload) else { return nil }
+            return Self.clientId(of: data)
+        })
+        attachmentClientIds.formUnion(oldStoredClientIds)
+        for item in timelineStore.items {
+            guard case .user(let message) = item else { continue }
+            let isAtBarrier = timelineStore.order(of: item.id).map { $0 <= Double(seq) } ?? false
+            if isAtBarrier {
+                attachmentClientIds.insert(message.clientId)
+            }
+            if outboxToRemove.contains(message.clientId) {
+                attachmentClientIds.insert(message.clientId)
+            }
+            if message.pending, message.ts <= localClearTime, isAtBarrier {
+                clientIds.insert(message.clientId)
+                attachmentClientIds.insert(message.clientId)
+            }
+        }
+
+        // Keep only ids associated with this barrier; generations protect older in-flight callbacks without an
+        // unbounded tombstone list.
+        clearedClientIds = clientIds
+        clearedStreamIds = streamIds
+        if !isDemo {
+            defaults.set(clearedClientIds.sorted(), forKey: DefaultsKey.clearedChatClientIds)
+            defaults.set(clearedStreamIds.sorted(), forKey: DefaultsKey.clearedChatStreamIds)
+        }
+
+        var persisted = isDemo || !persist
+        var persistenceFailure = "存储失败"
+        if persist && !isDemo {
+            do {
+                let removed = try persistence.clearChat(through: seq, ts: ts, d: payload, outboxClientIds: outboxToRemove)
+                clearedClientIds.formUnion(removed)
+                persisted = true
+                chatClearPersistencePending = false
+                defaults.set(false, forKey: DefaultsKey.chatClearPersistencePending)
+                defaults.removeObject(forKey: DefaultsKey.clearedChatClientIds)
+                defaults.removeObject(forKey: DefaultsKey.clearedChatStreamIds)
+            } catch {
+                persisted = false
+                chatClearPersistencePending = true
+                defaults.set(true, forKey: DefaultsKey.chatClearPersistencePending)
+                defaults.set(clearedClientIds.sorted(), forKey: DefaultsKey.clearedChatClientIds)
+                defaults.set(clearedStreamIds.sorted(), forKey: DefaultsKey.clearedChatStreamIds)
+                persistenceFailure = error.localizedDescription
+            }
+        }
+
+        chatGeneration &+= 1
+        let clearVisibleState = {
+            self.timelineStore.remove(through: Double(seq))
+            for clientId in clientIds { self.timelineStore.remove("u:" + clientId) }
+            for streamId in streamIds { self.timelineStore.remove("a:" + streamId) }
+            self.streamingIds.subtract(streamIds)
+            self.streamsClosedLocally.subtract(streamIds)
+            self.streamActivityToken &+= 1
+            if self.streamingIds.isEmpty {
+                self.streamIdleTask?.cancel()
+                self.butlerState = .idle
+                self.butlerDetail = nil
+                self.butlerTool = nil
+            } else if self.butlerState == .idle {
+                self.scheduleStreamIdleCheck()
+            }
+            self.draftText = ""
+            self.draftItems = []
+            self.lastChatClearSeq = max(self.lastChatClearSeq, seq)
+            if seq >= self.lastSeq { self.localOrderCounter = 0 }
+        }
+        if animated { withAnimation(spring, clearVisibleState) } else { clearVisibleState() }
+
+        if !isDemo {
+            defaults.set(Int(lastChatClearSeq), forKey: DefaultsKey.chatClearSeq)
+        }
+        let attachmentsRemoved = attachmentCache.remove(clientIds: attachmentClientIds)
+        refreshOutboxCount()
+        guard persisted else {
+            showToast("Mac 已清除聊天记录，但本机无法保存清除记录，重启后旧聊天可能重新出现：\(persistenceFailure)")
+            return false
+        }
+        guard attachmentsRemoved else {
+            showToast("聊天记录已清除，但本机附件缓存未能完全删除")
+            return false
+        }
+        return true
+    }
+
+    /// Captures attachment ids before a sync reset drops the stored event log and hydrated timeline.
+    func chatAttachmentClientIds(through seq: Int64, clearedAt: Int64) -> Set<String> {
+        let localClearTime = clearedAt - hostClockOffsetMs
+        var ids = Set(persistence.outbox().filter { $0.createdAt <= localClearTime }.map(\.clientId))
+        for item in timelineStore.items {
+            guard case .user(let message) = item,
+                  timelineStore.order(of: item.id).map({ $0 <= Double(seq) }) ?? false else { continue }
+            ids.insert(message.clientId)
+        }
+        ids.formUnion(persistence.allEvents().compactMap { event -> String? in
+            guard event.seq < seq, event.k == "msg.user", let data = try? JSONValue(data: event.payload) else { return nil }
+            return Self.clientId(of: data)
+        })
+        return ids
+    }
+
     /// Stops the reply Orbit is producing right now (`chat.interrupt`). Tasks and execution sessions keep going.
     func stopReply() {
         Task {
@@ -74,6 +283,7 @@ extension AppModel {
     // MARK: Streaming
 
     func beginStreaming(id: String, proactive: Bool, text: String = "") {
+        guard !clearedStreamIds.contains(id) else { return }
         let msg = AssistantMessage(id: id, text: text, proactive: proactive, interrupted: false, streaming: true, ts: nowMs())
         timelineStore.upsert(.assistant(msg), order: nextLocalOrder())
         streamingIds.insert(id)
@@ -82,6 +292,7 @@ extension AppModel {
 
     /// Appends a delta in place (no re-sort, no re-insert). Deltas for a message that already ended are ignored.
     func appendStreamDelta(id: String, text: String) {
+        guard !clearedStreamIds.contains(id) else { return }
         streamActivityToken &+= 1
         guard timelineStore.contains("a:" + id) else {
             beginStreaming(id: id, proactive: false, text: text)
@@ -105,6 +316,10 @@ extension AppModel {
     func applyUserEcho(_ d: JSONValue, ts: Int64, seq: Int64) {
         let hostId = Self.nonEmpty(d["id"]?.string)
         let clientId = Self.nonEmpty(d["clientId"]?.string) ?? hostId ?? ShortID.make()
+        guard seq > lastChatClearSeq || !clearedClientIds.contains(clientId) else { return }
+        if seq > lastChatClearSeq, clearedClientIds.remove(clientId) != nil, chatClearPersistencePending {
+            defaults.set(clearedClientIds.sorted(), forKey: DefaultsKey.clearedChatClientIds)
+        }
         let local = userMessage(clientId: clientId)
         var atts = (try? d["attachments"]?.decode([Attachment].self)) ?? []
         // Keep the local attachment list if the echo dropped it (images still render from the cache).
@@ -123,6 +338,8 @@ extension AppModel {
 
     func applyAssistantFinal(_ d: JSONValue, ts: Int64, seq: Int64) {
         guard let id = d["id"]?.string else { return }
+        guard seq > lastChatClearSeq || !clearedStreamIds.contains(id) else { return }
+        if seq > lastChatClearSeq { clearedStreamIds.remove(id) }
         let text = d["text"]?.string ?? ""
         let interrupted = d["interrupted"]?.bool ?? false
         if streamingIds.contains(id) { streamingIds.remove(id) }
@@ -181,6 +398,7 @@ extension AppModel {
     @discardableResult
     func send(text: String, attachments: [Attachment], clientId: String = ShortID.make()) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clearedClientIds.contains(clientId) else { return clientId }
         guard !trimmed.isEmpty || !attachments.isEmpty else { return clientId }
         let online = canUseHost
         let msg = UserMessage(id: nil, clientId: clientId, text: trimmed, attachments: attachments, ts: nowMs(),
@@ -294,8 +512,10 @@ extension AppModel {
     /// - not connected / timed out / cancelled → `.queued` (stays in the outbox, flushed after the next reconnect);
     /// - the host refused it → `.failed(reason)` (stays in the outbox, but only `retry(clientId:)` sends it again).
     func deliver(clientId: String) async {
+        guard !clearedClientIds.contains(clientId) else { return }
         guard !inFlightDeliveries.contains(clientId), let payload = outgoingPayload(clientId: clientId) else { return }
         if case .sent? = userMessage(clientId: clientId)?.delivery { return }   // the host already has it
+        let generation = chatGeneration
         inFlightDeliveries.insert(clientId)
         defer { inFlightDeliveries.remove(clientId) }
         setDelivery(clientId, .sending)
@@ -306,9 +526,11 @@ extension AppModel {
         }
         do {
             let res = try await request("chat.send", d, timeout: .seconds(30))
+            guard generation == chatGeneration, !clearedClientIds.contains(clientId) else { return }
             markSent(clientId: clientId, msgId: res["msgId"]?.string)
             if !isDemo { persistence.removeOutbox(clientId: clientId); refreshOutboxCount() }
         } catch {
+            guard generation == chatGeneration, !clearedClientIds.contains(clientId) else { return }
             setDelivery(clientId, Self.deliveryState(after: error))
         }
     }
@@ -336,18 +558,22 @@ extension AppModel {
     /// Sends everything waiting in the outbox, oldest first. Messages that failed (host refusal) wait for `retry`.
     func flushOutbox() async {
         guard canUseHost else { return }
+        let generation = chatGeneration
         if isDemo {
             let queued = timeline.compactMap { item -> String? in
                 if case .user(let m) = item, m.delivery == .queued { return m.clientId }
                 return nil
             }
             for id in queued {
+                guard generation == chatGeneration else { return }
                 await deliver(clientId: id)
                 if !canUseHost { return }
             }
             return
         }
         for item in persistence.outbox() {
+            guard generation == chatGeneration else { return }
+            if clearedClientIds.contains(item.clientId) { continue }
             if case .failed? = userMessage(clientId: item.clientId)?.delivery { continue }
             showOutboxMessage(item)
             await deliver(clientId: item.clientId)
@@ -358,7 +584,7 @@ extension AppModel {
     /// Makes sure every outbox row is on screen as a queued message (after a relaunch or a history reset).
     func showOutboxMessages() {
         guard !isDemo else { return }
-        for item in persistence.outbox() { showOutboxMessage(item) }
+        for item in persistence.outbox() where !clearedClientIds.contains(item.clientId) { showOutboxMessage(item) }
     }
 
     private func showOutboxMessage(_ item: OutboxItem) {
@@ -368,7 +594,7 @@ extension AppModel {
         timelineStore.upsert(.user(msg), order: nextLocalOrder())
     }
 
-    func refreshOutboxCount() { outboxCount = persistence.outbox().count }
+    func refreshOutboxCount() { outboxCount = persistence.outbox().filter { !clearedClientIds.contains($0.clientId) }.count }
 
     /// Messages waiting for the Mac to come back (the "待发送" count).
     var queuedMessageCount: Int {

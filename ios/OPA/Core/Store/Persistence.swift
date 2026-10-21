@@ -84,6 +84,45 @@ final class Persistence {
         scheduleSave()
     }
 
+    /// Removes chat history up to `seq`, cancels the queued messages present at the barrier, and stores the
+    /// barrier event itself in one save. Other event domains (tasks, memories, settings, imports) stay intact.
+    /// Returns client ids from removed outbox items so the model can ignore late callbacks.
+    func clearChat(through seq: Int64, ts: Int64, d: JSONValue, outboxClientIds: Set<String>? = nil) throws -> Set<String> {
+        let payload = try d.data()
+        var clientIds: Set<String> = []
+        do {
+            try context.transaction {
+                let events = try context.fetch(FetchDescriptor<StoredEvent>())
+                let existingBarrier = events.first { $0.seq == seq }
+                if let existingBarrier, existingBarrier.k != "chat.cleared" {
+                    throw ChatClearPersistenceError.sequenceCollision(seq)
+                }
+
+                for event in events where event.seq < seq && Self.isChatEvent(event.k) {
+                    context.delete(event)
+                }
+
+                let queued = try context.fetch(FetchDescriptor<OutboxItem>())
+                for item in queued where outboxClientIds?.contains(item.clientId) ?? true {
+                    clientIds.insert(item.clientId)
+                    context.delete(item)
+                }
+
+                if existingBarrier == nil {
+                    context.insert(StoredEvent(seq: seq, ts: ts, k: "chat.cleared", payload: payload))
+                }
+            }
+            return clientIds
+        } catch {
+            context.rollback()
+            throw error
+        }
+    }
+
+    private static func isChatEvent(_ kind: String) -> Bool {
+        ["msg.user", "msg.assistant", "ui.render", "ui.patch"].contains(kind)
+    }
+
     func clearEvents() {
         try? context.delete(model: StoredEvent.self)
         try? context.save()
@@ -143,4 +182,14 @@ final class Persistence {
     }
 
     func saveNow() { try? context.save() }
+}
+
+enum ChatClearPersistenceError: Error, LocalizedError {
+    case sequenceCollision(Int64)
+
+    var errorDescription: String? {
+        switch self {
+        case .sequenceCollision(let seq): "聊天清除事件的序号 \(seq) 已被其他事件使用"
+        }
+    }
 }

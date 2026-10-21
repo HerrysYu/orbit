@@ -109,13 +109,15 @@ export class Gateway extends EventEmitter {
   private doSync(ch: Channel, reqId: string, lastSeq: number) {
     const evs = this.log_.since(lastSeq);
     const top = this.log_.lastSeq();
+    const barrier = this.log_.chatClearBarrier();
+    const chatCleared = barrier ? { chatCleared: barrier } : {};
     if (evs) {
-      ch.send({ t: 'res', id: reqId, ok: true, d: { fromSeq: lastSeq + 1, toSeq: top, reset: false } });
+      ch.send({ t: 'res', id: reqId, ok: true, d: { fromSeq: lastSeq + 1, toSeq: top, reset: false, ...chatCleared } });
       for (const ev of evs) ch.send(ev);
     } else {
       // Snapshot: replay the most recent window only; handler-level state (tasks/settings) is re-emitted by the app layer.
       const from = Math.max(0, top - 500);
-      ch.send({ t: 'res', id: reqId, ok: true, d: { fromSeq: from + 1, toSeq: top, reset: true } });
+      ch.send({ t: 'res', id: reqId, ok: true, d: { fromSeq: from + 1, toSeq: top, reset: true, ...chatCleared } });
       for (const ev of this.log_.since(from) ?? []) ch.send(ev);
     }
     // Same synchronous stretch as the replay: no new `ev` can land between the replay and going live.

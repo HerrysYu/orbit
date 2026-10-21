@@ -4,6 +4,7 @@ import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CodexRpc } from './rpc.ts';
+import { resolveMcpServices } from '../mcp/registry.ts';
 import { log } from '../util/log.ts';
 import { OPA_HOME } from '../store/db.ts';
 import { DEFAULT_PHONE_SERIAL, phoneConfigStatus, type PhoneMcpConfig } from '../phone/config.ts';
@@ -19,6 +20,9 @@ import type { Model } from './protocol/v2/Model.ts';
 import type { AppInfo } from './protocol/v2/AppInfo.ts';
 import type { TokenUsageBreakdown } from './protocol/v2/TokenUsageBreakdown.ts';
 import type { JsonValue } from './protocol/serde_json/JsonValue.ts';
+import type { ListMcpServerStatusParams } from './protocol/v2/ListMcpServerStatusParams.ts';
+import type { ListMcpServerStatusResponse } from './protocol/v2/ListMcpServerStatusResponse.ts';
+import type { McpServerStatus } from './protocol/v2/McpServerStatus.ts';
 
 export const SKILLS_DIR = join(import.meta.dirname, '../../../skills');
 export const WORKSPACE = join(OPA_HOME, 'workspace');
@@ -26,6 +30,7 @@ export const WORKSPACE = join(OPA_HOME, 'workspace');
 /** Appended to every worker session so sandbox denials turn into approval requests instead of silent failures. */
 const WORKER_INSTRUCTIONS = `你是 Orbit（主人的私人 AI 伙伴）派出的执行者。任务单来自 Orbit，结果也交回给 Orbit。
 - 默认工作目录是 ${WORKSPACE}，临时文件放这里。
+- 处理外部服务时，优先使用任务单点名且当前会话实际提供、权限覆盖目标步骤的服务 MCP / 插件；不得假设本地配置就代表已登录。缺少工具、授权或调用失败时停止重复尝试并如实回报，不自行安装服务、索取凭据或改变用户指定渠道。只有服务接口不可用且公开网页可完成时才走浏览器；电脑 / 手机界面仅作为确有必要的后备，遵循任务单指定的设备和授权，不要自行换设备。
 - 如果操作因为沙箱/权限限制失败（例如 operation not permitted、写入工作区外的路径、需要联网），不要放弃：用提权方式重新请求执行该命令（会进入审批流程，由 Orbit 或主人批准）。
 - 不要伪造结果；没完成就说明卡在哪一步。`;
 
@@ -54,6 +59,7 @@ export interface LiveSession {
   plan?: { step: string; status: string }[];
   turns: number;
   phone?: boolean;
+  mcpServices?: string[];
   phoneEndSeen?: boolean;
   phoneBeginInFlight?: boolean;
   phoneLockHeld?: boolean;
@@ -71,6 +77,7 @@ export interface CreateSessionOpts {
   skills?: string[];          // skill folder names under skills/ to attach as skill inputs
   outputSchema?: unknown;     // JSON schema for the final message
   phone?: boolean;
+  mcpServices?: string[];
   signal?: AbortSignal;
 }
 
@@ -102,6 +109,9 @@ export const PHONE_MCP_SERVER = 'orbit_phone';
 const STEP_TURN_TIMEOUT_MS = 120_000;
 const PHONE_TOOL_TIMEOUT_MS = 150_000;
 const STEP_CONFIG_TTL_MS = 10 * 60_000;
+const MCP_DIAGNOSTIC_BUDGET_MS = 90_000;
+const MCP_DIAGNOSTIC_REQUEST_TIMEOUT_MS = 10_000;
+const MCP_DIAGNOSTIC_POLL_MS = 750;
 /** Built-in Codex abilities a phone step / executor thread must not have: it decides or relays, it never acts on the Mac. */
 const STEP_FEATURES_OFF = {
   shell_tool: false, apps: false, plugins: false, multi_agent: false, skill_search: false, computer_use: false, goals: false, sleep_tool: false,
@@ -187,6 +197,11 @@ export class CodexBridge extends EventEmitter {
 
   async createSession(o: CreateSessionOpts): Promise<LiveSession> {
     throwIfAborted(o.signal);
+    const mcpServices = normalizeMcpServices(o.mcpServices);
+    if (mcpServices.length && (o.phone || isPhoneTitle(o.title))) {
+      throw new Error('手机会话不能选择普通 MCP 服务。');
+    }
+    const selectedMcpConfig = mcpServices.length ? this.resolveSelectedMcpServices(mcpServices) : undefined;
     const phoneStatus = o.phone ? phoneConfigStatus() : undefined;
     if (o.phone && !phoneStatus?.config) {
       throw new Error(phoneStatus?.reason ?? '手机工具不可用；请运行 opa phone setup。');
@@ -205,7 +220,7 @@ export class CodexBridge extends EventEmitter {
       serviceName: 'opa',
       ...(phoneStatus?.config ? {
         config: phoneThreadConfig(phoneStatus.config),
-      } : {}),
+      } : selectedMcpConfig ? { config: { mcp_servers: selectedMcpConfig } } : {}),
     };
     const res = await this.rpc.request<ThreadStartResponse>('thread/start', params);
     if (o.signal?.aborted) {
@@ -216,6 +231,7 @@ export class CodexBridge extends EventEmitter {
     const s: LiveSession = {
       threadId: res.thread.id, title: sessionTitle, model: res.model, permission, status: 'idle', turns: 0,
       phone: Boolean(o.phone || isPhoneTitle(o.title)), phoneMcpCalls: new Map(),
+      ...(mcpServices.length ? { mcpServices } : {}),
     };
     this.sessions.set(s.threadId, s);
     this.subscribed.add(s.threadId);
@@ -319,24 +335,45 @@ export class CodexBridge extends EventEmitter {
     return out.reverse();
   }
 
-  private async ensureLoaded(threadId: string, phoneHint = false): Promise<LiveSession> {
+  private async ensureLoaded(threadId: string, phoneHint = false, mcpServicesHint?: string[]): Promise<LiveSession> {
     let s = this.sessions.get(threadId);
-    if (s && this.subscribed.has(threadId)) return s;
+    if (s && this.subscribed.has(threadId)) {
+      const current = normalizeMcpServices(s.mcpServices);
+      const selected = mcpServicesHint ?? current;
+      if (mcpServicesHint !== undefined && !sameMcpServices(current, selected)) {
+        throw new Error('当前会话已加载不同的 MCP 服务选择；请新建会话后再更改。');
+      }
+      if ((s.phone || isPhoneTitle(s.title) || phoneHint) && selected.length) throw new Error('手机会话不能选择普通 MCP 服务。');
+      if (mcpServicesHint !== undefined) {
+        if (selected.length) this.resolveSelectedMcpServices(selected);
+        s.mcpServices = selected.length ? [...selected] : undefined;
+      }
+      return s;
+    }
     // Thread created elsewhere (or before a restart) — resume it so we receive its events.
-    const knownPhone = Boolean(s?.phone || phoneHint);
+    const mcpServices = mcpServicesHint ?? s?.mcpServices ?? [];
+    const knownPhone = Boolean(s?.phone || (s && isPhoneTitle(s.title)) || phoneHint);
+    if (knownPhone && mcpServices.length) throw new Error('手机会话不能选择普通 MCP 服务。');
+    const selectedMcpConfig = mcpServices.length ? this.resolveSelectedMcpServices(mcpServices) : undefined;
     const knownPhoneStatus = knownPhone ? phoneConfigStatus() : undefined;
     if (knownPhone && !knownPhoneStatus?.config) {
       throw new Error(knownPhoneStatus?.reason ?? '手机工具不可用；请运行 opa phone setup。');
     }
     let res = await this.rpc.request<any>('thread/resume', {
       threadId,
-      ...(knownPhoneStatus?.config ? { config: phoneThreadConfig(knownPhoneStatus.config) } : {}),
+      ...(knownPhoneStatus?.config ? { config: phoneThreadConfig(knownPhoneStatus.config) } :
+        s && selectedMcpConfig ? { config: { mcp_servers: selectedMcpConfig } } : {}),
     });
     this.subscribed.add(threadId);
     if (s) return s;
     const title = res.thread?.name ?? res.thread?.preview?.slice(0, 40) ?? threadId;
     const phone = phoneHint || isPhoneTitle(title);
     if (phone) {
+      if (mcpServices.length) {
+        this.subscribed.delete(threadId);
+        this.unloadThread(threadId);
+        throw new Error('手机会话不能选择普通 MCP 服务。');
+      }
       const phoneStatus = phoneConfigStatus();
       if (!phoneStatus.config) {
         throw new Error(phoneStatus.reason ?? '手机工具不可用；请运行 opa phone setup。');
@@ -347,18 +384,33 @@ export class CodexBridge extends EventEmitter {
         res = await this.rpc.request<any>('thread/resume', { threadId, config: phoneThreadConfig(phoneStatus.config) });
         this.subscribed.add(threadId);
       }
+    } else if (!s && selectedMcpConfig) {
+      // Unknown threads must first be identified by their actual title so a phone worker never receives ordinary MCP.
+      res = await this.rpc.request<any>('thread/resume', { threadId, config: { mcp_servers: selectedMcpConfig } });
+      this.subscribed.add(threadId);
     }
-    s = { threadId, title, model: res.model, permission: 'manual', status: 'idle', turns: 0, phone, phoneMcpCalls: new Map() };
+    s = {
+      threadId, title, model: res.model, permission: 'manual', status: 'idle', turns: 0, phone, phoneMcpCalls: new Map(),
+      ...(mcpServices.length ? { mcpServices: [...mcpServices] } : {}),
+    };
     this.sessions.set(threadId, s);
     return s;
   }
 
   /** Attach to an existing thread without sending anything. */
-  async attach(threadId: string, title?: string, permission: Permission = 'manual'): Promise<LiveSession> {
+  async attach(threadId: string, title?: string, permission: Permission = 'manual', mcpServices?: string[]): Promise<LiveSession> {
+    const selected = mcpServices === undefined ? undefined : normalizeMcpServices(mcpServices);
+    const known = this.sessions.get(threadId);
+    if (selected?.length && (Boolean(known?.phone || (known && isPhoneTitle(known.title))) || Boolean(title && isPhoneTitle(title)))) {
+      throw new Error('手机会话不能选择普通 MCP 服务。');
+    }
+    if (selected?.length) this.resolveSelectedMcpServices(selected);
     await this.start();
-    const s = await this.ensureLoaded(threadId, Boolean(title && isPhoneTitle(title)));
+    const s = await this.ensureLoaded(threadId, Boolean(title && isPhoneTitle(title)), selected);
     if (title) s.title = title;
     if (isPhoneTitle(s.title)) s.phone = true;
+    if (selected !== undefined) s.mcpServices = selected.length ? selected : undefined;
+    if (s.phone && s.mcpServices?.length) throw new Error('手机会话不能选择普通 MCP 服务。');
     s.permission = permission;
     return s;
   }
@@ -391,6 +443,103 @@ export class CodexBridge extends EventEmitter {
     await this.start();
     const r = await this.rpc.request<any>('mcpServerStatus/list', {});
     return (r.data ?? []).map((s: any) => ({ name: s.name, tools: Object.keys(s.tools ?? {}), auth: s.authStatus }));
+  }
+
+  /** Check selected MCP services on a temporary read-only thread without creating a model turn. */
+  async checkMcpServices(ids: readonly string[]): Promise<Array<{ id: string; server: string; connected: boolean; toolCount: number; auth: string; error?: string }>> {
+    const selectedIds = normalizeMcpServices(ids);
+    if (!selectedIds.length) return [];
+
+    const results = new Map<string, { id: string; server: string; connected: boolean; toolCount: number; auth: string; error?: string }>();
+    const selectedConfigs: { [key: string]: JsonValue } = {};
+    for (const id of selectedIds) {
+      const server = `orbit_mcp_${id}`;
+      try {
+        Object.assign(selectedConfigs, this.resolveSelectedMcpServices([id]));
+      } catch {
+        results.set(id, { id, server, connected: false, toolCount: 0, auth: 'unknown', error: '服务配置不可用、已禁用或缺少凭据' });
+      }
+    }
+    if (!Object.keys(selectedConfigs).length) return selectedIds.map((id) => results.get(id)!);
+
+    let threadId: string | undefined;
+    const deadline = Date.now() + MCP_DIAGNOSTIC_BUDGET_MS;
+    try {
+      await withTimeout(this.start(), Math.min(15_000, deadline - Date.now()));
+      const config = await this.lockedConfig({ mcp_servers: selectedConfigs }, true, true);
+      const remaining = Math.max(1, deadline - Date.now());
+      const start = await this.rpc.request<ThreadStartResponse>('thread/start', {
+        cwd: WORKSPACE, ephemeral: true, approvalPolicy: 'never', sandbox: 'read-only', serviceName: 'opa-mcp-diagnostic', config,
+      } satisfies ThreadStartParams, Math.min(15_000, remaining));
+      threadId = start.thread.id;
+
+      let statuses = new Map<string, McpServerStatus>();
+      while (Date.now() < deadline) {
+        statuses = await this.listMcpStatuses(threadId, deadline);
+        const done = Object.keys(selectedConfigs).every((server) => {
+          const status = statuses.get(server);
+          if (!status) return false;
+          if (status.runtimeStatus === 'connected') return true;
+          return ['authenticationRequired', 'failed', 'cancelled', 'disabled'].includes(status.runtimeStatus ?? '');
+        });
+        if (done) break;
+        const wait = Math.min(MCP_DIAGNOSTIC_POLL_MS, Math.max(0, deadline - Date.now()));
+        if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+
+      for (const id of selectedIds) {
+        if (results.has(id)) continue;
+        const server = `orbit_mcp_${id}`;
+        const status = statuses.get(server);
+        const tools = status?.tools ?? {};
+        const toolCount = Object.keys(tools).length;
+        const auth = validMcpAuthStatus(status?.authStatus);
+        const connected = status?.runtimeStatus === 'connected' && !status.toolsError && toolCount > 0;
+        results.set(id, {
+          id, server, connected, toolCount, auth,
+          ...(!connected ? { error: mcpStatusError(status, toolCount) } : {}),
+        });
+      }
+    } catch {
+      for (const id of selectedIds) {
+        if (!results.has(id)) results.set(id, {
+          id, server: `orbit_mcp_${id}`, connected: false, toolCount: 0, auth: 'unknown', error: '服务连接状态查询失败',
+        });
+      }
+    } finally {
+      if (threadId) this.unloadThread(threadId);
+    }
+    return selectedIds.map((id) => results.get(id)!);
+  }
+
+  private resolveSelectedMcpServices(ids: readonly string[]): { [key: string]: JsonValue } {
+    try {
+      return resolveMcpServices(ids, { home: process.env.OPA_HOME, env: process.env }) as { [key: string]: JsonValue };
+    } catch {
+      // Resolver errors may originate in user-controlled MCP config and must never expose credentials or URLs.
+      throw new Error('MCP 服务配置不可用、已禁用或缺少凭据。');
+    }
+  }
+
+  private async listMcpStatuses(threadId: string, deadline: number): Promise<Map<string, McpServerStatus>> {
+    const statuses = new Map<string, McpServerStatus>();
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const params: ListMcpServerStatusParams = {
+        threadId, limit: 100, detail: 'toolsAndAuthOnly', ...(cursor ? { cursor } : {}),
+      };
+      const page = await this.rpc.request<ListMcpServerStatusResponse>(
+        'mcpServerStatus/list', params, Math.min(MCP_DIAGNOSTIC_REQUEST_TIMEOUT_MS, remaining),
+      );
+      for (const status of page.data ?? []) statuses.set(status.name, status);
+      cursor = typeof page.nextCursor === 'string' && page.nextCursor ? page.nextCursor : undefined;
+      if (cursor && seenCursors.has(cursor)) break;
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor && Date.now() < deadline);
+    return statuses;
   }
 
   /** Direct MCP tool call (connectors), bypassing a full agent turn. Needs a loaded thread; we keep one utility thread. */
@@ -555,9 +704,9 @@ export class CodexBridge extends EventEmitter {
     }
   }
 
-  private async lockedConfig(base: ThreadConfig, disableOtherMcp: boolean): Promise<ThreadConfig> {
+  private async lockedConfig(base: ThreadConfig, disableOtherMcp: boolean, refreshOtherMcp = false): Promise<ThreadConfig> {
     const mcp: { [key: string]: JsonValue } = {};
-    if (disableOtherMcp) for (const name of await this.configuredMcpServers()) mcp[name] = { enabled: false };
+    if (disableOtherMcp) for (const name of await this.configuredMcpServers(refreshOtherMcp)) mcp[name] = { enabled: false };
     if (isRecord(base.mcp_servers)) Object.assign(mcp, base.mcp_servers);
     return {
       ...base,
@@ -568,9 +717,9 @@ export class CodexBridge extends EventEmitter {
   }
 
   /** MCP servers from the user's own Codex config: a fresh thread would start them all, so they get switched off. */
-  private async configuredMcpServers(): Promise<string[]> {
+  private async configuredMcpServers(refresh = false): Promise<string[]> {
     const cached = this.mcpNamesCache;
-    if (cached && Date.now() - cached.at < STEP_CONFIG_TTL_MS) return cached.names;
+    if (!refresh && cached && Date.now() - cached.at < STEP_CONFIG_TTL_MS) return cached.names;
     let names: string[] = [];
     try {
       const r = await this.rpc.request<any>('config/read', { includeLayers: false, cwd: WORKSPACE }, 10_000);
@@ -864,6 +1013,43 @@ function phoneToolResultStatus(item: any): string | undefined {
 }
 
 function isPhoneTitle(title: string): boolean { return title.trimStart().startsWith('📱') || title.trimStart().startsWith('🤵 📱'); }
+
+function normalizeMcpServices(ids: readonly string[] | undefined): string[] {
+  if (ids === undefined) return [];
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id.trim())) {
+    throw new Error('mcpServices 必须是非空字符串数组。');
+  }
+  return [...new Set(ids)];
+}
+
+function sameMcpServices(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id) => right.includes(id));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('MCP diagnostic timed out')), Math.max(1, timeoutMs));
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
+function validMcpAuthStatus(value: unknown): string {
+  return typeof value === 'string' && ['unknown', 'unsupported', 'notLoggedIn', 'bearerToken', 'oAuth'].includes(value)
+    ? value
+    : 'unknown';
+}
+
+function mcpStatusError(status: McpServerStatus | undefined, toolCount: number): string {
+  if (!status) return '未获取服务状态';
+  if (status.runtimeStatus === 'authenticationRequired' || status.authStatus === 'notLoggedIn') return '服务需要登录';
+  if (status.runtimeStatus === 'failed' || status.runtimeStatus === 'cancelled' || status.runtimeStatus === 'disabled') return '服务连接失败';
+  if (status.toolsError) return '工具列表读取失败';
+  if (status.runtimeStatus === 'connected' && toolCount === 0) return '服务已连接但没有可用工具';
+  return '服务尚未连接';
+}
 
 const SENSITIVE_PHONE_PARAM = /(?:text|input|password|passwd|secret|token|credential|phone|mobile|code|otp|pin|message|content|query|search|task|summary|address|location|姓名|手机号|电话|文本|输入|密码|验证码|令牌|密钥|消息|内容|查询|搜索|任务|地址|位置|备注|卡号)/i;
 

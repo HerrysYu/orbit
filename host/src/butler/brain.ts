@@ -34,6 +34,8 @@ interface Compaction {
   finish(ok: boolean): void;
 }
 
+export interface BrainResetTarget { threadId?: string; turnId?: string }
+
 /** Events: 'delta' (text) | 'message' (fullText) | 'tool' (name) | 'turn_done' (status, error?) | 'compacted' (the thread's history was compacted — by us or by Codex itself) */
 export class Brain extends EventEmitter {
   threadId?: string;
@@ -47,6 +49,8 @@ export class Brain extends EventEmitter {
   private compaction?: Compaction;
   /** `compact()` gives up after this long. A field so tests can shorten it. */
   compactTimeoutMs = COMPACT_TIMEOUT_MS;
+  private generation = 0;
+  private resetWaiters = new Set<() => void>();
   runner: ToolRunner = async () => ({ text: 'no runner' });
 
   constructor(private bridge: CodexBridge, private db: Db) {
@@ -79,23 +83,47 @@ export class Brain extends EventEmitter {
    * so when they change we start a new thread and seed it with a carry-over summary.
    */
   async ensure(o: { instructions: string; tools: BrainTool[]; model?: string; carryOver: () => Promise<string | undefined> }): Promise<string> {
+    const generation = this.generation;
+    let wake!: () => void;
+    const reset = new Promise<never>((_, reject) => {
+      wake = () => reject(new Error('brain context was cleared'));
+      this.resetWaiters.add(wake);
+    });
+    const work = this.ensureInGeneration(o, generation);
+    try { return await Promise.race([work, reset]); }
+    finally { this.resetWaiters.delete(wake); }
+  }
+
+  private async ensureInGeneration(o: { instructions: string; tools: BrainTool[]; model?: string; carryOver: () => Promise<string | undefined> }, generation: number): Promise<string> {
     await this.bridge.start();
+    this.assertGeneration(generation);
     const key = hash(o.instructions + JSON.stringify(o.tools.map((t) => [t.name, t.description, t.parameters])) + (o.model ?? ''));
     const dynamicTools = o.tools.map((t) => ({ type: 'function', name: t.name, description: t.description, inputSchema: t.parameters }));
     if (this.threadId && key === this.configKey) {
-      if (!(await this.resume(this.threadId))) {
+      const existing = this.threadId;
+      if (!(await this.resume(existing))) {
+        this.assertGeneration(generation);
         log.warn('brain', 'starting a fresh brain thread');
-        this.threadId = undefined;
+        if (this.threadId === existing) this.threadId = undefined;
       }
+      this.assertGeneration(generation);
       if (this.threadId) return this.threadId;
     }
     const replaced = this.threadId ?? this.retiredId;
     const carry = replaced ? await o.carryOver().catch(() => undefined) : undefined;
+    this.assertGeneration(generation);
+    const model = o.model || await this.bridge.defaultModel();
+    this.assertGeneration(generation);
     const r = await this.bridge.rpc.request<any>('thread/start', {
-      model: o.model || (await this.bridge.defaultModel()), cwd: WORKSPACE, approvalPolicy: 'never', sandbox: 'read-only',
+      model, cwd: WORKSPACE, approvalPolicy: 'never', sandbox: 'read-only',
       baseInstructions: o.instructions, config: BRAIN_CONFIG, dynamicTools, serviceName: 'orbit-brain',
     });
+    if (generation !== this.generation) {
+      void this.bridge.rpc.request('thread/archive', { threadId: r.thread.id }, 5_000).catch(() => {});
+      throw new Error('brain context was cleared');
+    }
     if (replaced) await this.bridge.rpc.request('thread/archive', { threadId: replaced }).catch(() => {});
+    this.assertGeneration(generation);
     this.retiredId = undefined;
     this.threadId = r.thread.id;
     this.tokens = 0;
@@ -107,6 +135,43 @@ export class Brain extends EventEmitter {
     this.pendingCarry = carry;
     log.info('brain', `brain thread ${this.threadId} (model ${r.model})`);
     return this.threadId!;
+  }
+
+  private assertGeneration(generation: number): void {
+    if (generation !== this.generation) throw new Error('brain context was cleared');
+  }
+
+  /** Detach only the dedicated conversational brain. Other Codex sessions and phone workers are unaffected. */
+  resetForClear(): BrainResetTarget {
+    const target = { threadId: this.threadId, turnId: this.turnId };
+    this.generation++;
+    for (const wake of this.resetWaiters) wake();
+    this.resetWaiters.clear();
+    this.compaction?.finish(false);
+    this.threadId = undefined;
+    this.turnId = undefined;
+    const done = this.turnDone;
+    this.turnDone = undefined;
+    done?.('interrupted');
+    this.configKey = '';
+    this.retiredId = undefined;
+    this.tokens = 0;
+    this.window = null;
+    this.pendingCarry = undefined;
+    return target;
+  }
+
+  /** Best-effort cleanup of the third-party brain thread after its local identity has been detached. */
+  interruptAndArchive(target: BrainResetTarget): void {
+    if (!target.threadId) return;
+    void (async () => {
+      if (target.turnId) {
+        await this.bridge.rpc.request('turn/interrupt', { threadId: target.threadId, turnId: target.turnId }, 5_000)
+          .catch((e: any) => log.debug('brain', `could not interrupt cleared thread ${target.threadId}: ${e?.message ?? e}`));
+      }
+      await this.bridge.rpc.request('thread/archive', { threadId: target.threadId }, 10_000)
+        .catch((e: any) => log.debug('brain', `could not archive cleared thread ${target.threadId}: ${e?.message ?? e}`));
+    })();
   }
 
   private pendingCarry?: string;
@@ -129,6 +194,9 @@ export class Brain extends EventEmitter {
    * this turn *and the ones after it* (Codex keeps them), so the caller passes both every round. No effort = leave it to Codex.
    */
   async turn(text: string, o: { model?: string; effort?: string } = {}): Promise<string> {
+    const generation = this.generation;
+    const threadId = this.threadId;
+    if (!threadId) throw new Error('brain thread is not ready');
     const input: any[] = [];
     const carry = this.pendingCarry;
     if (carry) {
@@ -136,19 +204,31 @@ export class Brain extends EventEmitter {
       this.pendingCarry = undefined;
     }
     input.push({ type: 'text', text, text_elements: [] });
-    const done = new Promise<string>((resolve) => { this.turnDone = resolve; });
-    let r: any;
-    try {
-      r = await this.bridge.rpc.request<any>('turn/start', {
-        threadId: this.threadId, input, model: o.model || null, effort: o.effort || null,
-        approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false },
-      });
-    } catch (e) {
-      this.pendingCarry ??= carry; // the turn never started: the thread has not seen the summary yet
-      throw e;
-    }
-    this.turnId = r.turn.id;
-    return done;
+    let resolveDone!: (status: string) => void;
+    const done = new Promise<string>((resolve) => { resolveDone = resolve; this.turnDone = resolve; });
+    const start = (async () => {
+      try {
+        const r = await this.bridge.rpc.request<any>('turn/start', {
+          threadId, input, model: o.model || null, effort: o.effort || null,
+          approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false },
+        });
+        if (generation !== this.generation || this.threadId !== threadId) {
+          void this.bridge.rpc.request('turn/interrupt', { threadId, turnId: r.turn.id }, 5_000).catch(() => {});
+          return 'interrupted';
+        }
+        this.turnId = r.turn.id;
+        return await done;
+      } catch (e) {
+        if (generation === this.generation) {
+          this.pendingCarry ??= carry; // the turn never started: the thread has not seen the summary yet
+          if (this.turnDone === resolveDone) this.turnDone = undefined;
+          throw e;
+        }
+        return 'interrupted';
+      }
+    })();
+    // `resetForClear()` resolves `done` immediately, even while turn/start is awaiting its RPC response.
+    return Promise.race([start, done]);
   }
 
   /** Append more input to the running turn (e.g. a new user message arrived). Returns false if no turn is active. */
@@ -177,10 +257,15 @@ export class Brain extends EventEmitter {
    */
   async compact(): Promise<boolean> {
     if (this.compaction) return this.compaction.done;
+    const generation = this.generation;
     const threadId = this.threadId;
     if (!threadId) return false;
     await this.bridge.start();
-    if (!(await this.resume(threadId))) return false;
+    this.assertGeneration(generation);
+    if (this.threadId !== threadId) return false;
+    const resumed = await this.resume(threadId);
+    this.assertGeneration(generation);
+    if (!resumed || this.threadId !== threadId) return false;
     let timer: NodeJS.Timeout | undefined;
     let settle!: (ok: boolean) => void;
     const c: Compaction = {
@@ -200,12 +285,18 @@ export class Brain extends EventEmitter {
     this.compaction = c;
     timer = setTimeout(() => { log.warn('brain', `compacting ${threadId} timed out`); c.finish(false); }, this.compactTimeoutMs);
     timer.unref();
-    try {
-      await this.bridge.rpc.request('thread/compact/start', { threadId }, this.compactTimeoutMs + 5_000);
-    } catch (e: any) {
-      log.warn('brain', 'thread/compact/start failed:', e?.message ?? e);
-      c.finish(false);
-    }
+    const request = this.bridge.rpc.request('thread/compact/start', { threadId }, this.compactTimeoutMs + 5_000)
+      .then(() => true, (e: any) => {
+        log.warn('brain', 'thread/compact/start failed:', e?.message ?? e);
+        c.finish(false);
+        return false;
+      });
+    const first = await Promise.race([
+      c.done.then((ok) => ({ kind: 'finished' as const, ok })),
+      request.then((ok) => ({ kind: 'request' as const, ok })),
+    ]);
+    if (first.kind === 'finished') return first.ok;
+    if (!first.ok) return c.done;
     return c.done;
   }
 

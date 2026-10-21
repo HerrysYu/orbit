@@ -36,3 +36,5 @@ cp -R skills/phone-automation ~/.codex/skills/phone-automation
 以上命令在仓库根目录执行。管家侧的 skills 由 Host 直接从本目录读取。
 
 `china-service-discovery` 供管家决策，由始终加载的 `butler-core` 要求在国内任务拆解前加载；无需安装到手机 worker。App / 网站检索地图直接包含在 `SKILL.md`，保证关闭 shell 的大脑仅用 `skill_load` 就能完整读取；地图不是强制路由表。
+
+内置 MCP 目录由 Host 的 `mcp_list` 查询，执行任务时通过 `codex_session_create` 的 `mcp_services` 按需选择。`china-service-discovery` 与 `codex-orchestration` 已包含该选择流程；服务、凭据和 ModelScope 导入说明见 [内置 MCP 服务](../docs/mcp-services.md)。

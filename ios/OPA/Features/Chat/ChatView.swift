@@ -14,6 +14,7 @@ struct ChatView: View {
     @FocusState private var composerFocused: Bool
     @State private var trayOpen = false
     @State private var scrollPosition = ScrollPosition()
+    @State private var confirmClearChat = false
     /// Whether the thread is scrolled to its end. New content only moves the view when it was.
     @State private var atBottom = true
     @State private var hasNewReply = false
@@ -49,10 +50,34 @@ struct ChatView: View {
         .animation(motion.fly, value: showsStage)
         .animation(motion.snappy, value: hasNewReply && !atBottom)
         .safeAreaInset(edge: .top, spacing: 0) {
-            ChatHeader(showsPresence: !showsStage, hero: hero)
+            ChatHeader(showsPresence: !showsStage, hero: hero) {
+                guard model.canUseHost else {
+                    model.showToast("请先连接 Mac，再清除聊天记录")
+                    return
+                }
+                confirmClearChat = true
+            }
         }
         .composerBar {
             ComposerView(focus: $composerFocused, trayOpen: $trayOpen) { scrollToBottom() }
+                .id(model.chatGeneration)
+                .disabled(model.isClearingChat)
+        }
+        .confirmationDialog("清除聊天记录？", isPresented: $confirmClearChat, titleVisibility: .visible) {
+            Button("清除聊天记录", role: .destructive) {
+                composerFocused = false
+                trayOpen = false
+                Task { await model.clearChatHistory() }
+            }
+        } message: {
+            Text("这会清空当前对话和未发送消息，并重置 Orbit 的当前对话上下文。长期记忆和任务会保留。")
+        }
+        .onChange(of: model.chatGeneration) { _, _ in
+            composerFocused = false
+            trayOpen = false
+            hasNewReply = false
+            atBottom = true
+            scrollPosition.scrollTo(edge: .bottom)
         }
         .toolbarVisibility(trayOpen ? .hidden : .automatic, for: .tabBar)
         #if DEBUG
